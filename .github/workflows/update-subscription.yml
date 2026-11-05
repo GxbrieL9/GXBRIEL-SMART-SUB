@@ -2,8 +2,8 @@ name: Update Universal Subscriptions
 
 on:
   schedule:
-    # Run hourly at minute 17
-    - cron: '17 * * * *'
+    # Run twice per hour
+    - cron: '17,47 * * * *'
   workflow_dispatch:
     inputs:
       speed_test_limit:
@@ -33,7 +33,7 @@ jobs:
   build-and-publish:
     name: Test & Publish Subscriptions
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
 
     steps:
       - name: Check out repository
@@ -106,8 +106,8 @@ jobs:
           SOURCE_URLS: ${{ secrets.SOURCE_URLS }}
           PYTHONUTF8: "1"
           PYTHONIOENCODING: "utf-8"
-          MAX_RUNTIME_SECONDS: "70"
-          SOURCE_TIMEOUT_SECONDS: "8"
+          MAX_RUNTIME_SECONDS: "240"
+          SOURCE_TIMEOUT_SECONDS: "15"
           SOURCE_RETRIES: "0"
           FETCH_WORKERS: "4"
           TCP_PREFILTER_ENABLED: "1"
@@ -117,12 +117,12 @@ jobs:
           MAX_LATENCY_MS: "3000"
           LATENCY_TIMEOUT_MS: "2000"
           LATENCY_TEST_ATTEMPTS: "1"
-          BENCHMARK_WORKERS: "24"
-          GEOIP_WORKERS: "12"
+          BENCHMARK_WORKERS: "32"
+          GEOIP_WORKERS: "16"
           SPEED_TEST_ENABLED: "1"
-          SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '24' }}
+          SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '80' }}
           SPEED_TEST_BYTES: "1048576"
-          SPEED_TIMEOUT_SECONDS: "2"
+          SPEED_TIMEOUT_SECONDS: "4"
           PREFERRED_SPEED_MBPS: ${{ inputs.preferred_speed || '24.0' }}
           MIN_SPEED_MBPS: "12.0"
           FAST_SPEED_MBPS: "24.0"
