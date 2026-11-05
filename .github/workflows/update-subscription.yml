@@ -105,20 +105,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/hiddify
-          key: hiddify-core-v5.5.5-linux-amd64
+          key: hiddify-core-v5.5.5-linux-amd64-r1
 
       - name: Install Hiddify Core
         run: |
           mkdir -p .cache/hiddify .bin
-          if [ ! -x .cache/hiddify/HiddifyCli ]; then
+          if [ ! -x .cache/hiddify/hiddify-core ]; then
             curl --fail --location --retry 2 \
               https://github.com/hiddify/hiddify-core/releases/download/v5.5.5/hiddify-core-linux-amd64.tar.gz \
               --output .cache/hiddify/hiddify-core.tar.gz
-            tar -xzf .cache/hiddify/hiddify-core.tar.gz -C .cache/hiddify
+            tar -xzf .cache/hiddify/hiddify-core.tar.gz --strip-components=1 -C .cache/hiddify
           fi
-          cp .cache/hiddify/HiddifyCli .bin/HiddifyCli
-          chmod +x .bin/HiddifyCli
-          .bin/HiddifyCli version --disable-color
+          cp .cache/hiddify/hiddify-core .bin/hiddify-core
+          chmod +x .bin/hiddify-core
+          .bin/hiddify-core version --disable-color
 
       - name: Run benchmark & generate subscriptions
         id: benchmark
@@ -159,7 +159,7 @@ jobs:
         id: publish-gist
         run: |
           python scripts/validate_hiddify.py \
-            --cli .bin/HiddifyCli \
+            --cli .bin/hiddify-core \
             --subscription public/subscription.txt \
             --clash public/clash.yaml \
             --singbox public/singbox.json \
