@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def build_subscription(raw_path: Path) -> str:
@@ -51,6 +52,7 @@ def prepare_gist_files(
         content = subscription_path.read_text(encoding="utf-8").strip()
         if content:
             files_payload["subscription.txt"] = {"content": content + "\n"}
+            files_payload["subscription-b64.txt"] = {"content": content + "\n"}
 
     if clash_path and clash_path.exists():
         clash_content = clash_path.read_text(encoding="utf-8").strip()
@@ -71,6 +73,9 @@ def prepare_gist_files(
 
 
 def _request(url: str, token: str, method: str = "GET", payload: dict | None = None) -> dict:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname != "api.github.com":
+        raise ValueError("Refusing non-GitHub HTTPS API URL")
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(url, data=data, method=method)
     request.add_header("Accept", "application/vnd.github+json")
@@ -136,9 +141,10 @@ def publish(
         return
 
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    backup_count = max(0, actual_node_count - fast_count)
     description = (
         f"GXBRIEL SMART SUB — Universal Multi-Format | "
-        f"Updated {now_iso} | {actual_node_count} nodes ({fast_count} >= 3 MB/s)"
+        f"Updated {now_iso} | {actual_node_count} nodes ({fast_count} >= 3 MB/s, {backup_count} backup)"
     )
 
     _request(gist_url, token, "PATCH", {

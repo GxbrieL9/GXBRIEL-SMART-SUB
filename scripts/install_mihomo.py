@@ -12,6 +12,7 @@ import tarfile
 import urllib.request
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def github_api_headers() -> dict[str, str]:
@@ -55,6 +56,9 @@ def choose_asset(release: dict) -> dict:
 
 
 def download(url: str, headers: dict[str, str] | None = None) -> bytes:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in {"api.github.com", "github.com", "objects.githubusercontent.com"}:
+        raise RuntimeError("Refusing download from an untrusted host.")
     request_headers = {"User-Agent": "node-subscription-builder/0.1"}
     if headers:
         request_headers.update(headers)

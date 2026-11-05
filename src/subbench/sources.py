@@ -70,7 +70,9 @@ def load_sources(path: Path) -> list[SourceSpec]:
             label, url = (item.strip() for item in value.split("|", 1))
         else:
             url = value
-            label = url
+            # Never use an unlabelled URL as a report/log source name: URLs
+            # from SOURCE_URLS may contain private subscription credentials.
+            label = f"source-{len(specs) + 1:02d}"
         if not url.startswith(("https://", "http://")) or url in seen:
             continue
         seen.add(url)
