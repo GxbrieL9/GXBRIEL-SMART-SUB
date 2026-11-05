@@ -5,6 +5,7 @@ from publish_gist import (
     get_permanent_raw_url,
     prepare_gist_files,
     should_publish,
+    validate_hiddify_singbox_compatibility,
 )
 
 
@@ -58,4 +59,34 @@ def test_prepare_gist_files_reads_all_formats(tmp_path: Path) -> None:
     assert files["subscription.txt"]["content"] == "base64data\n"
     assert files["clash.yaml"]["content"] == "proxies:\n"
     assert files["singbox.json"]["content"] == '{"outbounds":[]}\n'
+
+
+def test_validate_hiddify_singbox_compatibility_catches_unsupported_fields() -> None:
+    # 1. Invalid flow in singbox.json
+    bad_sb = {
+        "singbox.json": {"content": '{"outbounds": [{"type": "vless", "flow": "xtls-rprx-vision-udp443"}]}'}
+    }
+    valid, reason = validate_hiddify_singbox_compatibility(bad_sb)
+    assert valid is False
+    assert "unsupported flow" in reason
+
+    # 2. Fragment option in subscription.txt
+    import base64
+    bad_sub_uri = "vless://id@1.1.1.1:443?security=tls&fragment=0,104#bad"
+    bad_sub = {
+        "subscription.txt": {"content": base64.b64encode(bad_sub_uri.encode()).decode()}
+    }
+    valid, reason = validate_hiddify_singbox_compatibility(bad_sub)
+    assert valid is False
+    assert "fragment" in reason
+
+    # 3. Valid payload passes
+    good_files = {
+        "singbox.json": {"content": '{"outbounds": [{"type": "direct", "tag": "direct"}]}'},
+        "subscription.txt": {"content": base64.b64encode(b"vless://id@1.1.1.1:443?security=tls#good\n").decode()},
+        "clash.yaml": {"content": "proxies:\n  - name: good\n    type: vless\n    server: 1.1.1.1\n    port: 443\n"},
+    }
+    valid, reason = validate_hiddify_singbox_compatibility(good_files)
+    assert valid is True
+
 

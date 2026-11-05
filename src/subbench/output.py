@@ -345,6 +345,8 @@ def _rename_uri(uri: str, scheme: str, name: str) -> str:
             padded = encoded + "=" * (-len(encoded) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
             payload["ps"] = name
+            if payload.get("tls") in {"tls", "1", True} and not payload.get("fp"):
+                payload["fp"] = "chrome"
             rendered = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             return "vmess://" + base64.urlsafe_b64encode(rendered).decode("ascii").rstrip("=")
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error):

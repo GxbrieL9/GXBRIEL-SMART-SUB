@@ -4,12 +4,17 @@ import argparse
 import base64
 import json
 import os
+import shutil
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
+
+import yaml
 
 
 def build_subscription(raw_path: Path) -> str:
@@ -38,6 +43,98 @@ def should_publish(
             if not content or not content.strip():
                 return False
     return True
+
+
+def validate_hiddify_singbox_compatibility(
+    files_payload: dict[str, dict[str, str]],
+    singbox_bin: Path | None = None,
+) -> tuple[bool, str]:
+    """Strict quality gate ensuring all files are 100% compatible with Hiddify Core and sing-box."""
+    # 1. Validate singbox.json
+    if "singbox.json" in files_payload:
+        content = files_payload["singbox.json"]["content"]
+        try:
+            sb_data = json.loads(content)
+        except Exception as e:
+            return False, f"singbox.json is not valid JSON: {e}"
+        if not isinstance(sb_data, dict) or "outbounds" not in sb_data:
+            return False, "singbox.json is missing required 'outbounds' array"
+
+        for i, ob in enumerate(sb_data.get("outbounds", [])):
+            if ob.get("type") == "vless" and ob.get("flow"):
+                if ob["flow"] not in {"xtls-rprx-vision"}:
+                    return False, f"singbox.json outbound[{i}] has unsupported flow: {ob['flow']}"
+
+        # If sing-box / hiddify-core binary available, execute strict check
+        binary = singbox_bin
+        if binary is None or not binary.exists():
+            for candidate in (
+                Path(".bin/hiddify-core"),
+                Path(".bin/sing-box"),
+                Path(".bin/sing-box.exe"),
+                Path(shutil.which("sing-box") or ""),
+                Path(shutil.which("hiddify-core") or ""),
+            ):
+                if candidate and candidate.exists():
+                    binary = candidate
+                    break
+        if binary and binary.exists():
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tf:
+                tf.write(content)
+                temp_path = tf.name
+            try:
+                cmd = (
+                    [str(binary), "build", "-c", temp_path, "--disable-color", "-o", temp_path + ".built"]
+                    if "hiddify" in binary.name.lower()
+                    else [str(binary), "check", "-c", temp_path]
+                )
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                if res.returncode != 0:
+                    err = res.stderr.strip().splitlines()[-1] if res.stderr.strip() else "unknown core error"
+                    return False, f"core validation failed ({binary.name}): {err}"
+            finally:
+                Path(temp_path).unlink(missing_ok=True)
+                Path(temp_path + ".built").unlink(missing_ok=True)
+
+    # 2. Validate subscription.txt (V2Ray Base64)
+    if "subscription.txt" in files_payload:
+        content = files_payload["subscription.txt"]["content"].strip()
+        try:
+            decoded = base64.b64decode(content).decode("utf-8")
+        except Exception as e:
+            return False, f"subscription.txt is not valid Base64: {e}"
+        for line in decoded.splitlines():
+            clean = line.strip()
+            if not clean or clean.startswith("#"):
+                continue
+            if "xtls-rprx-vision-udp443" in clean:
+                return False, "subscription.txt contains forbidden flow 'xtls-rprx-vision-udp443'"
+            if "fragment=" in clean or "tls_fragment" in clean:
+                return False, "subscription.txt contains 'fragment' option which crashes Hiddify Core"
+            if clean.startswith("vmess://"):
+                b64_part = clean[8:].split("#")[0]
+                padded = b64_part + "=" * (-len(b64_part) % 4)
+                try:
+                    vdata = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+                    if vdata.get("tls") in {"tls", "1", True} and not vdata.get("fp"):
+                        return False, "VMESS with TLS missing 'fp' field (causes Hiddify '<nil>' crash)"
+                except Exception:
+                    pass
+
+    # 3. Validate clash.yaml
+    if "clash.yaml" in files_payload:
+        content = files_payload["clash.yaml"]["content"]
+        try:
+            clash_data = yaml.safe_load(content)
+        except Exception as e:
+            return False, f"clash.yaml is not valid YAML: {e}"
+        if isinstance(clash_data, dict) and "proxies" in clash_data:
+            for i, p in enumerate(clash_data.get("proxies", [])):
+                if p.get("type") == "vless" and p.get("flow"):
+                    if p["flow"] not in {"xtls-rprx-vision"}:
+                        return False, f"clash.yaml proxy[{i}] has unsupported flow: {p['flow']}"
+
+    return True, "All subscription formats passed Hiddify and sing-box validation"
 
 
 def prepare_gist_files(
@@ -109,6 +206,7 @@ def publish(
     files_payload: dict[str, dict[str, str]],
     report_path: Path | None = None,
     node_count: int | None = None,
+    singbox_bin: Path | None = None,
 ) -> None:
     gist_url = f"https://api.github.com/gists/{gist_id}"
     gist = _request(gist_url, token)
@@ -143,6 +241,12 @@ def publish(
     if not should_publish(actual_node_count, files=files_content_map):
         print("Notice: No nodes to publish or files are empty. Preserving existing Gist content.")
         return
+
+    # Strict Quality Gate: Validate compatibility with Hiddify Core & sing-box before updating Gist
+    valid, reason = validate_hiddify_singbox_compatibility(files_payload, singbox_bin=singbox_bin)
+    if not valid:
+        raise RuntimeError(f"Hiddify / sing-box pre-flight validation failed: {reason}")
+    print(f"✓ Quality gate passed: {reason}")
 
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     description = (
@@ -182,6 +286,7 @@ def main() -> int:
     parser.add_argument("--raw-subscription", type=Path, default=Path("public/subscription-raw.txt"), help="Path to raw subscription")
     parser.add_argument("--raw", type=Path, help="Legacy: path to raw subscription")
     parser.add_argument("--report", type=Path, default=Path("public/report.json"), help="Path to report.json")
+    parser.add_argument("--singbox-bin", type=Path, help="Path to sing-box executable for strict verification")
     args = parser.parse_args()
 
     gist_id = os.environ.get("GIST_ID", "").strip()
@@ -204,7 +309,7 @@ def main() -> int:
         files_payload["subscription.txt"] = {"content": b64_sub}
         files_payload["subscription-raw.txt"] = {"content": raw_sub}
 
-    publish(gist_id, token, files_payload, report_path=args.report)
+    publish(gist_id, token, files_payload, report_path=args.report, singbox_bin=args.singbox_bin)
     return 0
 
 

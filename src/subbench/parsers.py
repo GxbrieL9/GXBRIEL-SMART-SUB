@@ -513,6 +513,8 @@ def clash_to_uri(proxy: dict[str, Any]) -> str:
             options = proxy.get("ws-opts", {})
             data["path"] = str(options.get("path", "/"))
             data["host"] = str(options.get("headers", {}).get("Host", ""))
+        if proxy.get("tls"):
+            data["fp"] = str(proxy.get("client-fingerprint") or "chrome")
         return f"vmess://{_b64encode(json.dumps(data, separators=(',', ':')).encode('utf-8'))}"
 
     if scheme == "ss":

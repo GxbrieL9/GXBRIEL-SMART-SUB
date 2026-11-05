@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import platform
+import stat
+import tarfile
+import urllib.request
+import zipfile
+from pathlib import Path
+from urllib.parse import urlsplit
+
+
+def github_api_headers() -> dict[str, str]:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "node-subscription-builder/0.1",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def fetch_json(url: str) -> dict:
+    request = urllib.request.Request(url, headers=github_api_headers())
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return json.load(response)
+
+
+def choose_asset(release: dict) -> dict:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if system == "linux" and machine in {"x86_64", "amd64"}:
+        target = "linux-amd64.tar.gz"
+    elif system == "linux" and machine in {"aarch64", "arm64"}:
+        target = "linux-arm64.tar.gz"
+    elif system == "windows" and machine in {"x86_64", "amd64"}:
+        target = "windows-amd64.zip"
+    else:
+        raise RuntimeError(f"Unsupported platform or runner architecture: {system}/{machine}")
+
+    candidates = [
+        asset
+        for asset in release.get("assets", [])
+        if str(asset.get("name", "")).endswith(target)
+        and "legacy" not in str(asset.get("name", ""))
+    ]
+    if not candidates:
+        raise RuntimeError(f"Could not find a compatible sing-box release asset for {target}.")
+    return candidates[0]
+
+
+def download(url: str, headers: dict[str, str] | None = None) -> bytes:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in {"api.github.com", "github.com", "objects.githubusercontent.com"}:
+        raise RuntimeError("Refusing download from an untrusted host.")
+    request_headers = {"User-Agent": "node-subscription-builder/0.1"}
+    if headers:
+        request_headers.update(headers)
+    request = urllib.request.Request(url, headers=request_headers)
+    with urllib.request.urlopen(request, timeout=180) as response:
+        return response.read()
+
+
+def extract(asset_name: str, payload: bytes) -> bytes:
+    if asset_name.endswith(".zip"):
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            binary = [
+                item
+                for item in archive.namelist()
+                if Path(item).name.lower() in {"sing-box.exe", "sing-box"}
+            ]
+            if not binary:
+                raise RuntimeError("sing-box executable not found in zip archive.")
+            return archive.read(binary[0])
+    if asset_name.endswith(".tar.gz"):
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+            member = next(
+                (item for item in archive.getmembers() if Path(item.name).name == "sing-box"),
+                None,
+            )
+            if member is None:
+                raise RuntimeError("sing-box executable not found in tar archive.")
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                raise RuntimeError("Could not read sing-box executable.")
+            return extracted.read()
+    raise RuntimeError(f"Unsupported asset format: {asset_name}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+
+    release = fetch_json("https://api.github.com/repos/SagerNet/sing-box/releases/latest")
+    asset = choose_asset(release)
+    asset_url = str(asset.get("url") or asset["browser_download_url"])
+    asset_headers = github_api_headers()
+    asset_headers["Accept"] = "application/octet-stream"
+    payload = download(asset_url, asset_headers)
+    binary = extract(str(asset["name"]), payload)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_bytes(binary)
+    args.output.chmod(args.output.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    print(f"Installed {release.get('tag_name', 'unknown')} from {asset['name']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
