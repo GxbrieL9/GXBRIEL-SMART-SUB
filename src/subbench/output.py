@@ -362,6 +362,14 @@ def _rename_uri(uri: str, scheme: str, name: str) -> str:
         del qs["fm"]
         changed = True
 
+    # These are Xray/sing-box implementation hints, not VLESS URI transport
+    # parameters. Hiddify rejects some otherwise valid outbounds when they are
+    # present in the imported Base64 subscription.
+    for key in ("spx", "packetEncoding"):
+        if key in qs:
+            del qs[key]
+            changed = True
+
     if changed:
         clean_query = urllib.parse.urlencode(qs, doseq=True)
         main = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, clean_query, ""))

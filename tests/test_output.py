@@ -16,6 +16,17 @@ class OutputTests(unittest.TestCase):
         rendered = _rename_uri("vless://id@example.com:443?security=tls#old", "vless", "🇺🇸 美国 | VLESS | 001")
         self.assertEqual(unquote(rendered.split("#", 1)[1]), "🇺🇸 美国 | VLESS | 001")
 
+    def test_subscription_removes_xray_only_vless_query_options(self):
+        rendered = _rename_uri(
+            "vless://id@example.com:443?security=reality&type=tcp&spx=%2F&packetEncoding=xudp&pbk=key#old",
+            "vless",
+            "safe",
+        )
+        self.assertNotIn("spx=", rendered)
+        self.assertNotIn("packetEncoding=", rendered)
+        self.assertIn("security=reality", rendered)
+        self.assertIn("pbk=key", rendered)
+
     def test_vmess_display_name_is_replaced(self):
         payload = base64.urlsafe_b64encode(json.dumps({"ps": "old", "add": "example.com"}).encode()).decode().rstrip("=")
         rendered = _rename_uri(f"vmess://{payload}", "vmess", "🇯🇵 日本 | VMESS | 001")
