@@ -176,7 +176,9 @@ def run(args: argparse.Namespace) -> int:
                 nodes = benchmark.benchmark(nodes)
 
     max_latency = _int_env("MAX_LATENCY_MS", 3000)
-    preferred_speed = _float_env("PREFERRED_SPEED_MBPS", 24.0)
+    fast_speed = _float_env("FAST_SPEED_MBPS", 24.0)
+    good_speed = _float_env("GOOD_SPEED_MBPS", 12.0)
+    backup_speed = _float_env("BACKUP_SPEED_MBPS", 5.0)
     max_output_nodes = _int_env("MAX_OUTPUT_NODES", 200)
 
     if benchmark_performed:
@@ -193,14 +195,19 @@ def run(args: argparse.Namespace) -> int:
         fast_nodes = [
             node
             for node in reachable_pool
-            if node.speed_mbps is not None and node.speed_mbps >= preferred_speed
+            if node.speed_mbps is not None and node.speed_mbps >= fast_speed
         ]
         fast_nodes.sort(key=lambda n: (-float(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
 
         # 3. Tier 2: Verified reachable nodes (lowest latency) to supplement up to max_output_nodes
         fast_ids = set(id(n) for n in fast_nodes)
-        backup_nodes = [node for node in reachable_pool if id(node) not in fast_ids]
-        backup_nodes.sort(key=lambda n: (n.latency_ms or 10**9, n.name))
+        backup_nodes = [
+            node for node in reachable_pool
+            if id(node) not in fast_ids
+            and node.speed_mbps is not None
+            and node.speed_mbps >= backup_speed
+        ]
+        backup_nodes.sort(key=lambda n: (-(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
 
         if speed_test_enabled:
             needed_backup = max(0, max_output_nodes - len(fast_nodes))
@@ -209,8 +216,8 @@ def run(args: argparse.Namespace) -> int:
             else:
                 nodes = fast_nodes[:max_output_nodes]
             print(
-                f"Selected {len(nodes)} verified nodes: {len(fast_nodes)} fast (>= {preferred_speed:g} Mbps / 3 MB/s) "
-                f"+ {len(nodes) - len(fast_nodes)} low-latency backup nodes (from {len(reachable_pool)} reachable).",
+                f"Selected {len(nodes)} verified nodes: {len(fast_nodes)} fast (>= {fast_speed:g} Mbps) "
+                f"+ {len(nodes) - len(fast_nodes)} speed-tested backup nodes (>= {backup_speed:g} Mbps).",
                 flush=True,
             )
         else:
@@ -237,7 +244,7 @@ def run(args: argparse.Namespace) -> int:
                     workers=_int_env("ALIYUN_FC_WORKERS", 10),
                 )
 
-        _rename_nodes_by_country(nodes, preferred_speed)
+        _rename_nodes_by_country(nodes, fast_speed)
     if not nodes:
         failures = "; ".join(node.error or "unknown error" for node in unique.values() if node.error)
         source_errors.append(
