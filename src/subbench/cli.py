@@ -180,6 +180,22 @@ def run(args: argparse.Namespace) -> int:
             min_speed,
             require_speed=speed_test_enabled,
         )
+        if speed_test_enabled and not nodes and _bool_env("SPEED_FALLBACK_ENABLED", True):
+            fallback_min_speed = _float_env("SPEED_FALLBACK_MIN_MBPS", 0.1)
+            nodes = [
+                node
+                for node in unique.values()
+                if node.error is None
+                and node.latency_ms is not None
+                and node.latency_ms <= max_latency
+                and node.speed_mbps is not None
+                and node.speed_mbps >= fallback_min_speed
+            ]
+            print(
+                f"No nodes reached {min_speed:g} Mbps; using {len(nodes)} fully speed-tested "
+                f"fallback nodes at or above {fallback_min_speed:g} Mbps.",
+                flush=True,
+            )
         if not _bool_env("ALIYUN_FC_ENABLED", True):
             print("Aliyun FC TCP prefilter disabled.", flush=True)
         else:
