@@ -147,50 +147,7 @@ jobs:
 
       - name: Summary report
         if: always()
-        run: |
-          if [ -f public/report.json ]; then
-            python - <<'PY'
-            import json
-            import os
-
-            with open("public/report.json", encoding="utf-8") as f:
-                report = json.load(f)
-
-            node_count = report.get("node_count", 0)
-            nodes = report.get("nodes", [])
-            fast_nodes = sum(1 for n in nodes if (n.get("speed_mbps") or 0) >= 24.0)
-
-            countries = {}
-            for n in nodes:
-                cc = n.get("country_code", "UN")
-                countries[cc] = countries.get(cc, 0) + 1
-
-            top_countries = ", ".join(f"{k}: {v}" for k, v in sorted(countries.items(), key=lambda x: -x[1])[:8])
-
-            gist_id = os.environ.get("GIST_ID", "")
-            raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/subscription.txt"
-
-            summary = f"""
-            ## 🚀 GXBRIEL SMART SUB — Execution Summary
-            | Metric | Value |
-            | :--- | :--- |
-            | **Total Nodes Published** | `{node_count}` (max 200) |
-            | **Fast Nodes (≥ 24 Mbps / 3 MB/s)** | `{fast_nodes}` |
-            | **Top Locations** | {top_countries} |
-            | **Karing Subscription Link** | [`subscription.txt`]({raw_url}) |
-
-            ### 📲 Karing Import Instructions
-            1. Copy this permanent URL:
-               `{raw_url}`
-            2. Open **Karing** → **Profiles / Subscriptions** → **Add Subscription**.
-            3. Paste the URL and save.
-            """
-
-            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as s:
-                s.write(summary)
-            PY
-          else:
-            echo "No report.json found." >> $GITHUB_STEP_SUMMARY
-          fi
         env:
           GIST_ID: ${{ vars.GIST_ID }}
+        run: |
+          python scripts/summary.py
