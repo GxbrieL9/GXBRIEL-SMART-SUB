@@ -46,7 +46,18 @@ def _extract_v2nodes_subscription_url(document: str) -> str:
 
 
 def load_sources(path: Path) -> list[SourceSpec]:
-    lines: list[str] = []
+    lines: list[tuple[str, bool]] = []
+
+    # 1. Load priority sources from config/priority_sources.txt and PRIORITY_SOURCE_URLS
+    priority_file = path.parent / "priority_sources.txt"
+    if priority_file.exists():
+        lines.extend((line, True) for line in priority_file.read_text(encoding="utf-8").splitlines())
+
+    priority_env = os.environ.get("PRIORITY_SOURCE_URLS", "").strip()
+    if priority_env:
+        lines.extend((chunk, True) for chunk in re.split(r"[\r\n]+", priority_env))
+
+    # 2. Append general sources from SOURCE_URLS or sources.txt
     source_env = os.environ.get("SOURCE_URLS", "").strip()
     if source_env:
         for chunk in re.split(r"[\r\n]+", source_env):
@@ -54,15 +65,17 @@ def load_sources(path: Path) -> list[SourceSpec]:
             if not chunk or chunk.startswith("#"):
                 continue
             if re.search(r"[,;]\s*https?://", chunk):
-                lines.extend(re.split(r"[,;]\s*", chunk))
+                lines.extend((item, False) for item in re.split(r"[,;]\s*", chunk))
             else:
-                lines.append(chunk)
+                lines.append((chunk, False))
     elif path.exists():
-        lines.extend(path.read_text(encoding="utf-8").splitlines())
+        lines.extend((line, False) for line in path.read_text(encoding="utf-8").splitlines())
 
     specs: list[SourceSpec] = []
     seen: set[str] = set()
-    for line in lines:
+    priority_index = 0
+    regular_index = 0
+    for line, is_priority in lines:
         value = line.strip()
         if not value or value.startswith("#"):
             continue
@@ -74,7 +87,15 @@ def load_sources(path: Path) -> list[SourceSpec]:
             url = value
             # Never use an unlabelled URL as a report/log source name: URLs
             # from SOURCE_URLS may contain private subscription credentials.
-            label = f"source-{len(specs) + 1:02d}"
+            label = ""
+        if is_priority:
+            priority_index += 1
+            if not label:
+                label = f"priority-{priority_index:02d}"
+        else:
+            regular_index += 1
+            if not label:
+                label = f"source-{regular_index:02d}"
         if not url.startswith(("https://", "http://")) or url in seen:
             continue
         seen.add(url)

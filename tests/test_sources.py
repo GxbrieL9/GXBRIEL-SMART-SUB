@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import requests
@@ -7,6 +8,7 @@ from subbench.sources import (
     SourceSpec,
     _extract_v2nodes_subscription_url,
     fetch_sources,
+    load_sources,
 )
 
 
@@ -27,6 +29,42 @@ class DummyResponse:
 
 
 class SourceTests(unittest.TestCase):
+    def test_priority_sources_file_is_loaded_first(self):
+        tmp_dir = Path("scratch/test_priority_sources_tmp")
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        pri_file = tmp_dir / "priority_sources.txt"
+        pri_file.write_text("Eternity | https://example.com/eternity\nResilience | https://example.com/resilience\n", encoding="utf-8")
+        src_file = tmp_dir / "sources.txt"
+        src_file.write_text("https://example.com/other\n", encoding="utf-8")
+
+        with patch.dict("os.environ", {"SOURCE_URLS": "https://example.com/secret1"}, clear=True):
+            specs = load_sources(src_file)
+
+        self.assertEqual(len(specs), 3)
+        self.assertEqual(specs[0].name, "Eternity")
+        self.assertEqual(specs[0].url, "https://example.com/eternity")
+        self.assertEqual(specs[1].name, "Resilience")
+        self.assertEqual(specs[1].url, "https://example.com/resilience")
+        self.assertEqual(specs[2].url, "https://example.com/secret1")
+
+    def test_priority_sources_are_loaded_before_secret_sources(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "PRIORITY_SOURCE_URLS": "priority-a | https://example.com/a\nhttps://example.com/b",
+                "SOURCE_URLS": "https://example.com/secret-a\nhttps://example.com/a",
+            },
+            clear=True,
+        ):
+            specs = load_sources(__import__("pathlib").Path("missing-sources.txt"))
+
+        self.assertEqual([spec.url for spec in specs], [
+            "https://example.com/a",
+            "https://example.com/b",
+            "https://example.com/secret-a",
+        ])
+        self.assertEqual([spec.name for spec in specs[:2]], ["priority-a", "priority-02"])
+
     def test_extracts_v2nodes_subscription_from_landing_page(self):
         url = "https://www.v2nodes.com/subscriptions/country/all/?key=ABC123"
         document = f'<input data-config="{url}" value="{url}">'

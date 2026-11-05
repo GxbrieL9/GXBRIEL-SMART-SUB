@@ -124,6 +124,9 @@ jobs:
         id: benchmark
         env:
           SOURCE_URLS: ${{ secrets.SOURCE_URLS }}
+          PRIORITY_SOURCE_URLS: |-
+            https://raw.githubusercontent.com/VpnforWindowsSub/configs/refs/heads/master/Eternity
+            https://raw.githubusercontent.com/VPNforWindowsSub/configs/refs/heads/master/Resilience
           PYTHONUTF8: "1"
           PYTHONIOENCODING: "utf-8"
           MAX_RUNTIME_SECONDS: "210"
