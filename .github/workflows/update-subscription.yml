@@ -2,14 +2,14 @@ name: Update Universal Subscriptions
 
 on:
   schedule:
-    # Run twice per hour
+    # Run every 30 minutes at minute 17 and 47
     - cron: '17,47 * * * *'
   workflow_dispatch:
     inputs:
       speed_test_limit:
         description: 'Maximum candidate nodes to test speed (0 for unlimited)'
         required: false
-        default: '300'
+        default: '200'
         type: string
       preferred_speed:
         description: 'Preferred speed threshold in Mbps (24 Mbps = 3 MB/s)'
@@ -37,12 +37,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
@@ -83,7 +83,7 @@ jobs:
 
       - name: Cache Mihomo binary
         id: cache-mihomo
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@v4
         with:
           path: .cache/mihomo
           key: mihomo-${{ runner.os }}-${{ runner.arch }}-${{ steps.mihomo-release.outputs.version }}
@@ -106,10 +106,10 @@ jobs:
           SOURCE_URLS: ${{ secrets.SOURCE_URLS }}
           PYTHONUTF8: "1"
           PYTHONIOENCODING: "utf-8"
-          MAX_RUNTIME_SECONDS: "240"
-          SOURCE_TIMEOUT_SECONDS: "15"
-          SOURCE_RETRIES: "0"
-          FETCH_WORKERS: "4"
+          MAX_RUNTIME_SECONDS: "210"
+          SOURCE_TIMEOUT_SECONDS: "12"
+          SOURCE_RETRIES: "1"
+          FETCH_WORKERS: "8"
           TCP_PREFILTER_ENABLED: "1"
           TCP_CONNECT_TIMEOUT_SECONDS: "1"
           TCP_PREFILTER_WORKERS: "64"
@@ -117,17 +117,18 @@ jobs:
           MAX_LATENCY_MS: "3000"
           LATENCY_TIMEOUT_MS: "2000"
           LATENCY_TEST_ATTEMPTS: "1"
-          BENCHMARK_WORKERS: "32"
-          GEOIP_WORKERS: "16"
+          BENCHMARK_WORKERS: "64"
+          GEOIP_WORKERS: "24"
           SPEED_TEST_ENABLED: "1"
-          SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '80' }}
-          SPEED_TEST_BYTES: "1048576"
-          SPEED_TIMEOUT_SECONDS: "4"
+          SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '200' }}
+          SPEED_TEST_URL: "https://speed.cloudflare.com/__down?bytes=524288"
+          SPEED_TEST_BYTES: "524288"
+          SPEED_TIMEOUT_SECONDS: "3"
           PREFERRED_SPEED_MBPS: ${{ inputs.preferred_speed || '24.0' }}
-          MIN_SPEED_MBPS: "12.0"
           FAST_SPEED_MBPS: "24.0"
           GOOD_SPEED_MBPS: "12.0"
           BACKUP_SPEED_MBPS: "5.0"
+          MIN_SPEED_MBPS: "12.0"
           SPEED_FALLBACK_ENABLED: "1"
           SPEED_FALLBACK_MIN_MBPS: "5.0"
           MAX_OUTPUT_NODES: ${{ inputs.max_output_nodes || '200' }}
@@ -146,15 +147,6 @@ jobs:
             --singbox public/singbox.json \
             --raw-subscription public/subscription-raw.txt \
             --report public/report.json
-
-      - name: Upload build artifacts
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: subscription-output
-          path: public/
-          if-no-files-found: warn
-          retention-days: 7
 
       - name: Summary report
         if: always()

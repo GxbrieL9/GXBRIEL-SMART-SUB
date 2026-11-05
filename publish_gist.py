@@ -116,13 +116,17 @@ def publish(
 
     # Read stats from report if available
     fast_count = 0
+    good_count = 0
+    backup_count = 0
     actual_node_count = node_count or 0
     if report_path and report_path.exists():
         try:
             report_data = json.loads(report_path.read_text(encoding="utf-8"))
             actual_node_count = actual_node_count or report_data.get("node_count", 0)
             nodes = report_data.get("nodes", [])
-            fast_count = sum(1 for n in nodes if (n.get("speed_mbps") or 0) >= 24.0)
+            fast_count = sum(1 for n in nodes if (n.get("speed_mbps") or 0.0) >= 24.0)
+            good_count = sum(1 for n in nodes if 12.0 <= (n.get("speed_mbps") or 0.0) < 24.0)
+            backup_count = sum(1 for n in nodes if 5.0 <= (n.get("speed_mbps") or 0.0) < 12.0)
         except Exception:
             pass
 
@@ -141,10 +145,9 @@ def publish(
         return
 
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    backup_count = max(0, actual_node_count - fast_count)
     description = (
         f"GXBRIEL SMART SUB — Universal Multi-Format | "
-        f"Updated {now_iso} | {actual_node_count} nodes ({fast_count} >= 3 MB/s, {backup_count} backup)"
+        f"Updated {now_iso} | {actual_node_count} nodes (FAST: {fast_count}, GOOD: {good_count}, BACKUP: {backup_count})"
     )
 
     _request(gist_url, token, "PATCH", {
@@ -160,7 +163,9 @@ def publish(
     print("✓ GIST SUCCESSFULLY UPDATED WITH UNIVERSAL SUBSCRIPTION FORMATS!")
     print(f"  Description: {description}")
     print(f"  Total nodes: {actual_node_count}")
-    print(f"  Fast nodes (>= 3 MB/s / 24 Mbps): {fast_count}")
+    print(f"  FAST nodes (>= 24 Mbps): {fast_count}")
+    print(f"  GOOD nodes (12-24 Mbps): {good_count}")
+    print(f"  BACKUP nodes (5-12 Mbps): {backup_count}")
     print()
     print("  PERMANENT RAW LINKS (NO REVISION PINNING):")
     print(f"  1. V2Ray / Base64 : {sub_raw_url}")

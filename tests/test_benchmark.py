@@ -139,6 +139,24 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(first.name, "🇺🇸 美国 | VLESS | 001")
         self.assertEqual(second.name, "🇺🇸 美国 | VLESS | 002")
 
+    def test_nodes_are_renamed_with_speed_badges(self):
+        fast = make_node("fast", 100, 25.5)
+        good = make_node("good", 120, 15.0)
+        backup = make_node("backup", 150, 7.2)
+        fast.metadata["country_code"] = "US"
+        good.metadata["country_code"] = "DE"
+        backup.metadata["country_code"] = "NL"
+        _rename_nodes_by_country(
+            [fast, good, backup],
+            fast_speed=24.0,
+            good_speed=12.0,
+            backup_speed=5.0,
+            add_speed_badge=True,
+        )
+        self.assertEqual(fast.name, "🇺🇸 美国 | VLESS | 001 ⚡ FAST 25.5M")
+        self.assertEqual(good.name, "🇩🇪 德国 | VLESS | 001 🚀 GOOD 15.0M")
+        self.assertEqual(backup.name, "🇳🇱 荷兰 | VLESS | 001 🛡️ BACKUP 7.2M")
+
     def test_less_common_country_uses_chinese_name(self):
         node = make_node("upstream", 100, 5.0)
         node.metadata["country_code"] = "BA"

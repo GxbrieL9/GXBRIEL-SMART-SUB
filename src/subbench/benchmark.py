@@ -224,6 +224,29 @@ class MihomoBenchmark:
                         break
             elapsed = max(time.monotonic() - started, 0.001)
             node.speed_mbps = round(received * 8 / elapsed / 1_000_000, 2)
+
+            if node.speed_mbps >= 24.0:
+                # Re-verify fast node to ensure throughput stability and rule out transient TCP burst
+                try:
+                    re_started = time.monotonic()
+                    re_received = 0
+                    with requests.get(
+                        self.speed_url,
+                        proxies=self._proxies_for_port(port),
+                        stream=True,
+                        timeout=(min(10, self.speed_timeout_seconds), self.speed_timeout_seconds),
+                    ) as response2:
+                        response2.raise_for_status()
+                        for chunk in response2.iter_content(chunk_size=64 * 1024):
+                            re_received += len(chunk)
+                            if re_received >= (self.speed_bytes // 2):
+                                break
+                    re_elapsed = max(time.monotonic() - re_started, 0.001)
+                    re_speed = round(re_received * 8 / re_elapsed / 1_000_000, 2)
+                    node.speed_mbps = round((node.speed_mbps + re_speed) / 2.0, 2)
+                except Exception:
+                    pass
+
             self.geolocate(node, port)
         except (requests.RequestException, ValueError) as exc:
             node.error = f"speed: {exc}"
@@ -256,18 +279,33 @@ class MihomoBenchmark:
             if len(responsive_pool) <= self.speed_limit:
                 speed_candidates = responsive_pool
             else:
-                # 50% top lowest latency (highest potential throughput)
-                top_count = max(1, self.speed_limit // 2)
+                # 1. Top lowest latency slice (40% of quota for highest throughput potential)
+                top_count = max(1, int(self.speed_limit * 0.4))
                 top_slice = responsive_pool[:top_count]
+                selected_ids = set(id(n) for n in top_slice)
 
-                # 50% stratified across the rest of the pool for protocol/geo diversity
-                rest = responsive_pool[top_count:]
-                step = max(1, len(rest) // max(1, self.speed_limit - top_count)) if rest else 1
-                spaced = rest[::step] if rest else []
+                # 2. Balanced diversity across protocols and sources (60% of quota)
+                from collections import defaultdict
+                remaining = [n for n in responsive_pool if id(n) not in selected_ids]
+                buckets: dict[tuple[str, str], list[Node]] = defaultdict(list)
+                for n in remaining:
+                    buckets[(n.scheme.lower(), str(n.source))].append(n)
 
-                seen_ids = set(id(n) for n in top_slice)
-                extra = [n for n in spaced if id(n) not in seen_ids]
-                speed_candidates = (top_slice + extra)[: self.speed_limit]
+                diverse_slice: list[Node] = []
+                remaining_quota = self.speed_limit - len(top_slice)
+                while len(diverse_slice) < remaining_quota and any(buckets.values()):
+                    for key in list(buckets.keys()):
+                        if buckets[key]:
+                            candidate = buckets[key].pop(0)
+                            if id(candidate) not in selected_ids:
+                                diverse_slice.append(candidate)
+                                selected_ids.add(id(candidate))
+                                if len(diverse_slice) >= remaining_quota:
+                                    break
+                        else:
+                            del buckets[key]
+
+                speed_candidates = top_slice + diverse_slice
 
         total = len(speed_candidates)
         max_speed_workers = min(24, self.workers) if self.node_proxy_ports else 1

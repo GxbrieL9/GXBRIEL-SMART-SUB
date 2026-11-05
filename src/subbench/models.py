@@ -33,12 +33,15 @@ class Node:
     def report_dict(self) -> dict[str, Any]:
         server = self.clash.get("server") if self.clash else None
         port = self.clash.get("port") if self.clash else None
+        source_name = self.source
+        if source_name.startswith(("http://", "https://")):
+            source_name = "upstream"
         return {
             "name": self.name,
             "type": self.scheme,
             "server": server,
             "port": port,
-            "source": self.source,
+            "source": source_name,
             "original_name": self.metadata.get("original_name"),
             "country_code": self.metadata.get("country_code"),
             "exit_ip": self.metadata.get("exit_ip"),

@@ -68,6 +68,8 @@ def load_sources(path: Path) -> list[SourceSpec]:
             continue
         if "|" in value:
             label, url = (item.strip() for item in value.split("|", 1))
+            if label.startswith(("http://", "https://")):
+                label = f"source-{len(specs) + 1:02d}"
         else:
             url = value
             # Never use an unlabelled URL as a report/log source name: URLs
@@ -143,7 +145,8 @@ def fetch_sources(
                 print(f"Resolved the current V2Nodes subscription for {spec.name}.", flush=True)
             return SourceResult(source=spec, text=download(url))
         except (requests.RequestException, ValueError) as exc:
-            return SourceResult(source=spec, error=str(exc))
+            clean_err = re.sub(r"https?://[^\s'\"]+", "[REDACTED_URL]", str(exc))
+            return SourceResult(source=spec, error=clean_err)
 
     results: list[SourceResult] = []
     with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:

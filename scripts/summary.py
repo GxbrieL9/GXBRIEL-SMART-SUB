@@ -32,13 +32,19 @@ def generate_summary() -> int:
     nodes = report.get("nodes", [])
     stats = report.get("execution_stats", {})
     speed_stats = stats.get("speed_mbps", {})
-    fast_nodes = speed_stats.get("fast", sum(1 for n in nodes if (n.get("speed_mbps") or 0) >= 24.0))
-    good_nodes = speed_stats.get("good", 0)
-    backup_nodes = speed_stats.get("backup", 0)
+
+    fast_nodes = sum(1 for n in nodes if (n.get("speed_mbps") or 0.0) >= 24.0)
+    good_nodes = sum(1 for n in nodes if 12.0 <= (n.get("speed_mbps") or 0.0) < 24.0)
+    backup_nodes = sum(1 for n in nodes if 5.0 <= (n.get("speed_mbps") or 0.0) < 12.0)
+    excluded_slow = speed_stats.get("excluded_slow", 0)
+    speed_tested_total = stats.get("speed_test_completed", 0)
+
     duration_s = stats.get("duration_seconds", 0.0)
-    billed_m = stats.get("billed_minutes", max(1, (int(duration_s) + 59) // 60) if duration_s > 0 else 1)
-    projected_m = stats.get("monthly_projected_minutes", billed_m * 744)
-    balance_m = stats.get("github_free_balance_minutes", max(0, 2000 - projected_m))
+    duration_str = (
+        f"{int(duration_s // 60)}м {int(duration_s % 60):02d}с ({duration_s:.1f}с)"
+        if duration_s > 0
+        else "N/A"
+    )
 
     countries: dict[str, int] = {}
     protocols: dict[str, int] = {}
@@ -48,49 +54,53 @@ def generate_summary() -> int:
         countries[cc] = countries.get(cc, 0) + 1
         protocols[proto] = protocols.get(proto, 0) + 1
 
-    top_countries = ", ".join(f"{k}: {v}" for k, v in sorted(countries.items(), key=lambda x: -x[1])[:8]) or "N/A"
-    proto_breakdown = ", ".join(f"{k}: {v}" for k, v in sorted(protocols.items(), key=lambda x: -x[1])) or "N/A"
+    top_countries = (
+        ", ".join(f"{k}: {v}" for k, v in sorted(countries.items(), key=lambda x: -x[1])[:8])
+        or "N/A"
+    )
+    proto_breakdown = (
+        ", ".join(f"{k}: {v}" for k, v in sorted(protocols.items(), key=lambda x: -x[1]))
+        or "N/A"
+    )
 
     gist_id = os.environ.get("GIST_ID", "").strip()
     sub_raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/subscription.txt"
     clash_raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/clash.yaml"
     singbox_raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/singbox.json"
 
-    duration_str = f"{int(duration_s // 60)}м {int(duration_s % 60):02d}с ({duration_s:.1f}с)" if duration_s > 0 else "N/A"
+    spd_min = f"{speed_stats.get('min'):.1f}" if speed_stats.get("min") is not None else "N/A"
+    spd_med = f"{speed_stats.get('median'):.1f}" if speed_stats.get("median") is not None else "N/A"
+    spd_avg = f"{speed_stats.get('average'):.1f}" if speed_stats.get("average") is not None else "N/A"
+    spd_max = f"{speed_stats.get('max'):.1f}" if speed_stats.get("max") is not None else "N/A"
 
-    schedule_note = ""
-    if duration_s >= 95:
-        schedule_note = (
-            "\n> [!TIP]\n"
-            "> Длительность выполнения приблизилась к лимиту тайм-аута. "
-            "Рекомендуется переключиться на интервал раз в 2 часа (`cron: '17 */2 * * *'`) "
-            "с `timeout-minutes: 4` (расход останется в рамках 1 488 мин/мес).\n"
-        )
+    summary = f"""## 🚀 GXBRIEL SMART SUB — Универсальная подписка (Public)
 
-    summary = f"""## 🚀 GXBRIEL SMART SUB — Универсальная подписка
-
-| Показатель | Значение |
-| :--- | :--- |
-| **Опубликовано рабочих узлов** | **`{node_count}`** (из лимита до 200) |
-| **Скоростные узлы (≥ 3 МБ/с / 24 Мбит/с)** | **`{fast_nodes}`** |
-| **GOOD (12–24 Мбит/с)** | **`{good_nodes}`** |
-| **BACKUP (5–12 Мбит/с)** | **`{backup_nodes}`** |
-| **Speed min / median / average / max** | `{speed_stats.get("min", "N/A")} / {speed_stats.get("median", "N/A")} / {speed_stats.get("average", "N/A")} / {speed_stats.get("max", "N/A")} Mbps` |
-| **Поддерживаемые протоколы** | {proto_breakdown} |
-| **Геолокации узлов** | {top_countries} |
+| Показатель | Значение | Описание |
+| :--- | :--- | :--- |
+| **Опубликовано серверов** | **`{node_count}`** (из лимита до 200) | Прошли полный цикл проверки реальным трафиком |
+| ⚡ **FAST (≥ 24 Мбит/с / 3 МБ/с)** | **`{fast_nodes}`** | Премиум-узлы для 4K/стриминга (Tier 1) |
+| 🚀 **GOOD (12–24 Мбит/с)** | **`{good_nodes}`** | Высокоскоростные узлы (Tier 2) |
+| 🛡️ **BACKUP (5–12 Мбит/с)** | **`{backup_nodes}`** | Стабильный резерв (Tier 3) |
+| ❌ **Исключено медленных (< 5 Мбит/с)** | **`{excluded_slow}`** | Отклонены алгоритмом качества (не публикуются) |
+| 📊 **Скорость min / median / avg / max** | `{spd_min} / {spd_med} / {spd_avg} / {spd_max} Мбит/с` | Измеренная скорость реального скачивания |
+| 📡 **Полноценных Speedtest выполнено** | **`{speed_tested_total}`** узлов | Измерение скорости скачивания через Mihomo |
+| **Поддерживаемые протоколы** | {proto_breakdown} | VLESS, VMess, Trojan, TUIC |
+| **Геолокации узлов** | {top_countries} | Страны по проверенному egress IP |
 
 ---
 
-### ⏱️ Фактическая длительность и лимит GitHub Actions Free (0.00 $):
+### ⏱️ Метрики выполнения и GitHub Actions Public:
 
-| Метрика выполнения | Значение | Описание |
+| Метрика | Значение | Описание |
 | :--- | :--- | :--- |
-| **Фактическая длительность сборки** | **`{duration_str}`** | Жёсткий лимит `timeout-minutes: 2` |
-| **Списано включённых минут GitHub** | **`{billed_m} мин`** | Посекундное округление runner |
-| **Прогноз расхода в месяц** | **`~{projected_m} мин`** | Расчёт для 744 запусков (24/день * 31) |
-| **Остаток бесплатного лимита Free** | **`~{balance_m} мин`** | Из 2 000 включённых минут аккаунта |
-| **Финансовые расходы** | **0.00 $ (0 руб.)** | Гарантия нулевых расходов |
-{schedule_note}
+| **Фактическая длительность** | **`{duration_str}`** | Внутренний watchdog с лимитом `timeout-minutes: 5` |
+| **Стоимость runner'ов** | **0.00 $ (0 руб.)** | Неограниченные минуты для Public GitHub репозитория |
+| **Параллелизм тестирования** | **64 latency / 24 speed** | Многопоточный бенчмарк без перегрузки сокетов |
+| **Расписание обновления** | **Каждые 30 мин (`17,47 * * * *`)** | Свежие и рабочие конфиги круглые сутки |
+
+> [!NOTE]
+> ⚠️ **Важно для пользователей из РФ**: Измеренная скорость отражает пропускную способность узлов из облачной среды GitHub Actions. Проходимость конкретных узлов внутри РФ зависит от блокировок вашего интернет-провайдера и ТСПУ. Протоколы **VLESS Reality** и **Trojan** обеспечивают максимальную устойчивость.
+
 ---
 
 ### 🌐 Постоянные Raw-ссылки для подключения:

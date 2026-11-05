@@ -63,7 +63,13 @@ def _country_flag(country_code: str) -> str:
     return "".join(chr(ord(character) + 127397) for character in code)
 
 
-def _rename_nodes_by_country(nodes: list[Node], preferred_speed: float = 24.0) -> None:
+def _rename_nodes_by_country(
+    nodes: list[Node],
+    fast_speed: float = 24.0,
+    good_speed: float = 12.0,
+    backup_speed: float = 5.0,
+    add_speed_badge: bool = False,
+) -> None:
     counters: dict[tuple[str, str], int] = {}
     for node in nodes:
         country_code = str(node.metadata.get("country_code", "UN")).upper()
@@ -72,12 +78,17 @@ def _rename_nodes_by_country(nodes: list[Node], preferred_speed: float = 24.0) -
         protocol = node.scheme.upper()
         key = (country_code, protocol)
         counters[key] = counters.get(key, 0) + 1
-        speed_badge = ""
-        if node.speed_mbps is not None and node.speed_mbps >= preferred_speed:
-            speed_badge = f" ⚡ {node.speed_mbps:.1f}M"
+        badge = ""
+        if add_speed_badge and node.speed_mbps is not None:
+            if node.speed_mbps >= fast_speed:
+                badge = f" ⚡ FAST {node.speed_mbps:.1f}M"
+            elif node.speed_mbps >= good_speed:
+                badge = f" 🚀 GOOD {node.speed_mbps:.1f}M"
+            elif node.speed_mbps >= backup_speed:
+                badge = f" 🛡️ BACKUP {node.speed_mbps:.1f}M"
         node.name = (
             f"{_country_flag(country_code)} {country_name_zh(country_code)}"
-            f" | {protocol} | {counters[key]:03d}{speed_badge}"
+            f" | {protocol} | {counters[key]:03d}{badge}"
         )
         if node.clash:
             node.clash["name"] = node.name
@@ -191,33 +202,55 @@ def run(args: argparse.Namespace) -> int:
             and node.latency_ms <= max_latency
         ]
 
-        # 2. Tier 1: Verified fast nodes (>= preferred_speed Mbps / 3 MB/s)
-        fast_nodes = [
-            node
-            for node in reachable_pool
-            if node.speed_mbps is not None and node.speed_mbps >= fast_speed
-        ]
-        fast_nodes.sort(key=lambda n: (-float(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
-
-        # 3. Tier 2: Verified reachable nodes (lowest latency) to supplement up to max_output_nodes
-        fast_ids = set(id(n) for n in fast_nodes)
-        backup_nodes = [
-            node for node in reachable_pool
-            if id(node) not in fast_ids
-            and node.speed_mbps is not None
-            and node.speed_mbps >= backup_speed
-        ]
-        backup_nodes.sort(key=lambda n: (-(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
-
         if speed_test_enabled:
-            needed_backup = max(0, max_output_nodes - len(fast_nodes))
-            if _bool_env("SPEED_FALLBACK_ENABLED", True):
-                nodes = fast_nodes[:max_output_nodes] + backup_nodes[:needed_backup]
-            else:
-                nodes = fast_nodes[:max_output_nodes]
+            # 1. FAST: speed >= 24 Mbps (>= 3 MB/s)
+            fast_nodes = [
+                node
+                for node in reachable_pool
+                if node.speed_mbps is not None and node.speed_mbps >= fast_speed
+            ]
+            fast_nodes.sort(key=lambda n: (-float(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
+
+            # 2. GOOD: speed >= 12 and < 24 Mbps
+            good_nodes = [
+                node
+                for node in reachable_pool
+                if node.speed_mbps is not None and good_speed <= node.speed_mbps < fast_speed
+            ]
+            good_nodes.sort(key=lambda n: (-float(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
+
+            # 3. BACKUP: speed >= 5 and < 12 Mbps
+            backup_nodes = [
+                node
+                for node in reachable_pool
+                if node.speed_mbps is not None and backup_speed <= node.speed_mbps < good_speed
+            ]
+            backup_nodes.sort(key=lambda n: (-float(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
+
+            # 4. Excluded slow nodes: speed < 5 Mbps (or failed speedtest) - NEVER PUBLISHED!
+            slow_nodes = [
+                node
+                for node in unique.values()
+                if node.speed_mbps is not None and node.speed_mbps < backup_speed
+            ]
+
+            # 5. Priority assembly: FAST + GOOD first, BACKUP only as reserve up to max_output_nodes
+            primary_nodes = fast_nodes + good_nodes
+            needed_reserve = max(0, max_output_nodes - len(primary_nodes))
+            selected_reserve = backup_nodes[:needed_reserve]
+
+            nodes = primary_nodes[:max_output_nodes] + selected_reserve
+
             print(
-                f"Selected {len(nodes)} verified nodes: {len(fast_nodes)} fast (>= {fast_speed:g} Mbps) "
-                f"+ {len(nodes) - len(fast_nodes)} speed-tested backup nodes (>= {backup_speed:g} Mbps).",
+                f"Classification results: {len(fast_nodes)} FAST (>= {fast_speed:g} Mbps), "
+                f"{len(good_nodes)} GOOD ({good_speed:g}–{fast_speed:g} Mbps), "
+                f"{len(backup_nodes)} BACKUP ({backup_speed:g}–{good_speed:g} Mbps), "
+                f"{len(slow_nodes)} EXCLUDED (< {backup_speed:g} Mbps).",
+                flush=True,
+            )
+            print(
+                f"Published {len(nodes)} nodes: {len(fast_nodes)} FAST + {len(good_nodes)} GOOD "
+                f"+ {len(selected_reserve)} BACKUP reserve.",
                 flush=True,
             )
         else:
@@ -244,7 +277,13 @@ def run(args: argparse.Namespace) -> int:
                     workers=_int_env("ALIYUN_FC_WORKERS", 10),
                 )
 
-        _rename_nodes_by_country(nodes, fast_speed)
+        _rename_nodes_by_country(
+            nodes,
+            fast_speed=fast_speed,
+            good_speed=good_speed,
+            backup_speed=backup_speed,
+            add_speed_badge=True,
+        )
     if not nodes:
         failures = "; ".join(node.error or "unknown error" for node in unique.values() if node.error)
         source_errors.append(
@@ -258,6 +297,14 @@ def run(args: argparse.Namespace) -> int:
     duration_seconds = round(time.monotonic() - start_time, 2)
     billed_minutes = max(1, (int(duration_seconds) + 59) // 60)
     measured = [node.speed_mbps for node in unique.values() if node.speed_mbps is not None]
+    fast_count = sum(value >= fast_speed for value in measured)
+    good_count = sum(good_speed <= value < fast_speed for value in measured)
+    backup_count = sum(backup_speed <= value < good_speed for value in measured)
+    slow_count = sum(value < backup_speed for value in measured)
+    published_fast = sum(1 for n in nodes if (n.speed_mbps or 0.0) >= fast_speed)
+    published_good = sum(1 for n in nodes if good_speed <= (n.speed_mbps or 0.0) < fast_speed)
+    published_backup = sum(1 for n in nodes if backup_speed <= (n.speed_mbps or 0.0) < good_speed)
+
     execution_stats = {
         "duration_seconds": duration_seconds,
         "billed_minutes": billed_minutes,
@@ -275,9 +322,16 @@ def run(args: argparse.Namespace) -> int:
             "average": round(statistics.mean(measured), 3) if measured else None,
             "median": statistics.median(measured) if measured else None,
             "max": max(measured) if measured else None,
-            "fast": sum(value >= fast_speed for value in measured),
-            "good": sum(good_speed <= value < fast_speed for value in measured),
-            "backup": sum(backup_speed <= value < good_speed for value in measured),
+            "fast": fast_count,
+            "good": good_count,
+            "backup": backup_count,
+            "excluded_slow": slow_count,
+        },
+        "published": {
+            "total": len(nodes),
+            "fast": published_fast,
+            "good": published_good,
+            "backup": published_backup,
         },
     }
     write_outputs(Path(args.output), nodes, source_errors, execution_stats=execution_stats)

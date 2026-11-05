@@ -79,6 +79,16 @@ class SourceTests(unittest.TestCase):
         self.assertIsNone(results[0].error)
         self.assertEqual(requester.call_count, 2)
 
+    def test_fetch_sources_redacts_urls_in_error_messages(self):
+        with patch("subbench.sources.requests.get", side_effect=requests.RequestException("Failed connecting to https://secret-token.com/sub?key=12345")):
+            results = fetch_sources(
+                [SourceSpec(name="source-01", url="https://secret-token.com/sub?key=12345")],
+                workers=1,
+                retries=0,
+            )
+        self.assertNotIn("https://secret-token.com", results[0].error or "")
+        self.assertIn("[REDACTED_URL]", results[0].error or "")
+
 
 if __name__ == "__main__":
     unittest.main()
