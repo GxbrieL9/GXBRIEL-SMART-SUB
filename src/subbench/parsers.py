@@ -47,6 +47,12 @@ def _validate_vless_encryption(value: str) -> None:
         )
 
 
+def _validate_vless_flow(value: str) -> None:
+    flow = value.strip()
+    if flow and flow not in {"xtls-rprx-vision"}:
+        raise ValueError(f"unsupported VLESS flow for Hiddify Core: {flow[:120]}")
+
+
 def _normalize_ss_cipher(value: str) -> str:
     aliases = {
         "chacha20-poly1305": "chacha20-ietf-poly1305",
@@ -128,7 +134,7 @@ def parse_document(
         try:
             nodes.append(parse_uri(uri, source))
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-            if skipped_nodes is not None and str(exc).startswith("unsupported VLESS encryption"):
+            if skipped_nodes is not None and str(exc).startswith(("unsupported VLESS encryption", "unsupported VLESS flow")):
                 skipped_nodes.append(f"{source}: {exc}")
             continue
 
@@ -143,7 +149,7 @@ def parse_document(
             try:
                 nodes.append(parse_clash_proxy(proxy, source))
             except (ValueError, KeyError, TypeError) as exc:
-                if skipped_nodes is not None and str(exc).startswith("unsupported VLESS encryption"):
+                if skipped_nodes is not None and str(exc).startswith(("unsupported VLESS encryption", "unsupported VLESS flow")):
                     skipped_nodes.append(f"{source}: {exc}")
                 continue
     return nodes
@@ -235,6 +241,7 @@ def _parse_vless(uri: str, source: str) -> Node:
     }
     flow = _first(query, "flow")
     if flow:
+        _validate_vless_flow(flow)
         proxy["flow"] = flow
     encryption = _first(query, "encryption", "none").strip() or "none"
     _validate_vless_encryption(encryption)
