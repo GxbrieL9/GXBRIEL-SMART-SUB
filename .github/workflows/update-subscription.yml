@@ -2,8 +2,8 @@ name: Update Universal Subscriptions
 
 on:
   schedule:
-    # Run hourly at minute 0
-    - cron: '0 * * * *'
+    # Run hourly at minute 17
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       speed_test_limit:
@@ -33,7 +33,7 @@ jobs:
   build-and-publish:
     name: Test & Publish Subscriptions
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 2
 
     steps:
       - name: Check out repository
@@ -106,20 +106,23 @@ jobs:
           SOURCE_URLS: ${{ secrets.SOURCE_URLS }}
           PYTHONUTF8: "1"
           PYTHONIOENCODING: "utf-8"
-          SOURCE_TIMEOUT_SECONDS: "60"
-          SOURCE_RETRIES: "3"
-          FETCH_WORKERS: "8"
+          MAX_RUNTIME_SECONDS: "70"
+          SOURCE_TIMEOUT_SECONDS: "8"
+          SOURCE_RETRIES: "0"
+          FETCH_WORKERS: "4"
           TCP_PREFILTER_ENABLED: "1"
+          TCP_CONNECT_TIMEOUT_SECONDS: "1"
+          TCP_PREFILTER_WORKERS: "64"
           ALIYUN_FC_ENABLED: "0"
           MAX_LATENCY_MS: "3000"
-          LATENCY_TIMEOUT_MS: "6000"
-          LATENCY_TEST_ATTEMPTS: "2"
-          BENCHMARK_WORKERS: "48"
-          GEOIP_WORKERS: "48"
+          LATENCY_TIMEOUT_MS: "2000"
+          LATENCY_TEST_ATTEMPTS: "1"
+          BENCHMARK_WORKERS: "24"
+          GEOIP_WORKERS: "12"
           SPEED_TEST_ENABLED: "1"
-          SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '300' }}
-          SPEED_TEST_BYTES: "3000000"
-          SPEED_TIMEOUT_SECONDS: "8"
+          SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '24' }}
+          SPEED_TEST_BYTES: "262144"
+          SPEED_TIMEOUT_SECONDS: "2"
           PREFERRED_SPEED_MBPS: ${{ inputs.preferred_speed || '24.0' }}
           MIN_SPEED_MBPS: "0.1"
           MAX_OUTPUT_NODES: ${{ inputs.max_output_nodes || '200' }}

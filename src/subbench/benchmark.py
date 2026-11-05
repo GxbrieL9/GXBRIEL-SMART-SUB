@@ -46,6 +46,7 @@ class MihomoBenchmark:
         speed_enabled: bool = True,
         geo_workers: int | None = None,
         latency_attempts: int = 2,
+        deadline_monotonic: float | None = None,
     ) -> None:
         self.binary = binary
         self.workdir = workdir
@@ -60,6 +61,7 @@ class MihomoBenchmark:
         self.workers = max(1, workers)
         self.geo_workers = max(1, geo_workers or workers)
         self.latency_attempts = max(1, latency_attempts)
+        self.deadline_monotonic = deadline_monotonic
         self.speed_enabled = speed_enabled
         self.controller = "http://127.0.0.1:9090"
         self.proxy_port = 7890
@@ -246,7 +248,13 @@ class MihomoBenchmark:
         total = len(speed_candidates)
         max_speed_workers = min(12, self.workers) if self.node_proxy_ports else 1
         with ThreadPoolExecutor(max_workers=max_speed_workers) as executor:
-            futures = [executor.submit(self.speed, node) for node in speed_candidates]
+            futures = []
+            for node in speed_candidates:
+                if self.deadline_monotonic is not None and time.monotonic() >= self.deadline_monotonic:
+                    print("Runtime budget reached; publishing completed speed checks.", flush=True)
+                    break
+                futures.append(executor.submit(self.speed, node))
+            total = len(futures)
             for index, future in enumerate(as_completed(futures), start=1):
                 node = future.result()
                 result = f"{node.speed_mbps} Mbps" if node.speed_mbps is not None else node.error or "failed"

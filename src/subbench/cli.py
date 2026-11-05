@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 from .benchmark import MihomoBenchmark, write_mihomo_config
@@ -79,6 +80,7 @@ def _rename_nodes_by_country(nodes: list[Node]) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
+    runtime_deadline = time.monotonic() + max(10.0, _float_env("MAX_RUNTIME_SECONDS", 0.0)) if _float_env("MAX_RUNTIME_SECONDS", 0.0) > 0 else None
     source_specs = load_sources(args.sources)
     if not source_specs:
         raise RuntimeError("No sources configured. Add URLs to config/sources.txt or SOURCE_URLS.")
@@ -160,6 +162,7 @@ def run(args: argparse.Namespace) -> int:
                 speed_enabled=speed_test_enabled,
                 geo_workers=_int_env("GEOIP_WORKERS", 64),
                 latency_attempts=_int_env("LATENCY_TEST_ATTEMPTS", 2),
+                deadline_monotonic=runtime_deadline,
             ) as benchmark:
                 write_mihomo_config(workdir / "mihomo-nodes.yaml", nodes)
                 nodes = benchmark.benchmark(nodes)
