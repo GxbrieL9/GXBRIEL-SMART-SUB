@@ -269,7 +269,14 @@ class MihomoBenchmark:
             return valid
 
         if self.speed_limit <= 0 or len(valid) <= self.speed_limit:
-            speed_candidates = valid
+            speed_candidates = sorted(
+                valid,
+                key=lambda n: (
+                    0 if n.metadata.get("is_priority") else 1,
+                    n.latency_ms or 10**9,
+                    n.name,
+                ),
+            )
         else:
             # Representative sampling across the responsive pool (latency <= 2500ms)
             responsive_pool = [n for n in valid if (n.latency_ms or 10**9) <= 2500]
@@ -277,35 +284,56 @@ class MihomoBenchmark:
                 responsive_pool = valid
 
             if len(responsive_pool) <= self.speed_limit:
-                speed_candidates = responsive_pool
+                speed_candidates = sorted(
+                    responsive_pool,
+                    key=lambda n: (
+                        0 if n.metadata.get("is_priority") else 1,
+                        n.latency_ms or 10**9,
+                        n.name,
+                    ),
+                )
             else:
-                # 1. Top lowest latency slice (40% of quota for highest throughput potential)
-                top_count = max(1, int(self.speed_limit * 0.4))
-                top_slice = responsive_pool[:top_count]
-                selected_ids = set(id(n) for n in top_slice)
+                # 1. Prioritize nodes tagged as is_priority (e.g. Eternity & Resilience)
+                priority_pool = [n for n in responsive_pool if n.metadata.get("is_priority")]
+                other_pool = [n for n in responsive_pool if not n.metadata.get("is_priority")]
 
-                # 2. Balanced diversity across protocols and sources (60% of quota)
-                from collections import defaultdict
-                remaining = [n for n in responsive_pool if id(n) not in selected_ids]
-                buckets: dict[tuple[str, str], list[Node]] = defaultdict(list)
-                for n in remaining:
-                    buckets[(n.scheme.lower(), str(n.source))].append(n)
+                if len(priority_pool) >= self.speed_limit:
+                    speed_candidates = priority_pool[: self.speed_limit]
+                else:
+                    speed_candidates = list(priority_pool)
+                    selected_ids = set(id(n) for n in speed_candidates)
+                    remaining_quota = self.speed_limit - len(speed_candidates)
 
-                diverse_slice: list[Node] = []
-                remaining_quota = self.speed_limit - len(top_slice)
-                while len(diverse_slice) < remaining_quota and any(buckets.values()):
-                    for key in list(buckets.keys()):
-                        if buckets[key]:
-                            candidate = buckets[key].pop(0)
-                            if id(candidate) not in selected_ids:
-                                diverse_slice.append(candidate)
-                                selected_ids.add(id(candidate))
-                                if len(diverse_slice) >= remaining_quota:
-                                    break
-                        else:
-                            del buckets[key]
+                    # 2. Top lowest latency slice from remaining nodes (40% of remaining quota)
+                    top_count = max(1, int(remaining_quota * 0.4)) if remaining_quota > 0 else 0
+                    top_slice = [n for n in other_pool if id(n) not in selected_ids][:top_count]
+                    for n in top_slice:
+                        speed_candidates.append(n)
+                        selected_ids.add(id(n))
 
-                speed_candidates = top_slice + diverse_slice
+                    # 3. Balanced diversity across protocols and sources for rest of quota
+                    from collections import defaultdict
+
+                    remaining = [n for n in other_pool if id(n) not in selected_ids]
+                    buckets: dict[tuple[str, str], list[Node]] = defaultdict(list)
+                    for n in remaining:
+                        buckets[(n.scheme.lower(), str(n.source))].append(n)
+
+                    diverse_slice: list[Node] = []
+                    needed = self.speed_limit - len(speed_candidates)
+                    while len(diverse_slice) < needed and any(buckets.values()):
+                        for key in list(buckets.keys()):
+                            if buckets[key]:
+                                candidate = buckets[key].pop(0)
+                                if id(candidate) not in selected_ids:
+                                    diverse_slice.append(candidate)
+                                    selected_ids.add(id(candidate))
+                                    if len(diverse_slice) >= needed:
+                                        break
+                            else:
+                                del buckets[key]
+
+                    speed_candidates.extend(diverse_slice)
 
         total = len(speed_candidates)
         max_speed_workers = min(24, self.workers) if self.node_proxy_ports else 1

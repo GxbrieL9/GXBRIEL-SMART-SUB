@@ -22,6 +22,7 @@ _V2NODES_SUBSCRIPTION_RE = re.compile(
 class SourceSpec:
     name: str
     url: str
+    is_priority: bool = False
 
 
 @dataclass
@@ -99,7 +100,7 @@ def load_sources(path: Path) -> list[SourceSpec]:
         if not url.startswith(("https://", "http://")) or url in seen:
             continue
         seen.add(url)
-        specs.append(SourceSpec(name=label or url, url=url))
+        specs.append(SourceSpec(name=label or url, url=url, is_priority=is_priority))
     return specs
 
 

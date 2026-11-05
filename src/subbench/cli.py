@@ -118,7 +118,10 @@ def run(args: argparse.Namespace) -> int:
         if result.error:
             source_errors.append({"source": result.source.name, "error": result.error})
             continue
-        nodes.extend(parse_document(result.text or "", result.source.name, skipped_nodes))
+        parsed = parse_document(result.text or "", result.source.name, skipped_nodes)
+        for node in parsed:
+            node.metadata["is_priority"] = result.source.is_priority
+        nodes.extend(parsed)
 
     print(f"Fetched {len(source_results)} sources and parsed {len(nodes)} candidate nodes.")
     if skipped_nodes:
@@ -209,7 +212,14 @@ def run(args: argparse.Namespace) -> int:
                 for node in reachable_pool
                 if node.speed_mbps is not None and node.speed_mbps >= fast_speed
             ]
-            fast_nodes.sort(key=lambda n: (-float(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
+            fast_nodes.sort(
+                key=lambda n: (
+                    0 if n.metadata.get("is_priority") else 1,
+                    -float(n.speed_mbps or 0.0),
+                    n.latency_ms or 10**9,
+                    n.name,
+                )
+            )
 
             # 2. GOOD: speed >= 12 and < 24 Mbps
             good_nodes = [
@@ -217,7 +227,14 @@ def run(args: argparse.Namespace) -> int:
                 for node in reachable_pool
                 if node.speed_mbps is not None and good_speed <= node.speed_mbps < fast_speed
             ]
-            good_nodes.sort(key=lambda n: (-float(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
+            good_nodes.sort(
+                key=lambda n: (
+                    0 if n.metadata.get("is_priority") else 1,
+                    -float(n.speed_mbps or 0.0),
+                    n.latency_ms or 10**9,
+                    n.name,
+                )
+            )
 
             # 3. BACKUP: speed >= 5 and < 12 Mbps
             backup_nodes = [
@@ -225,7 +242,14 @@ def run(args: argparse.Namespace) -> int:
                 for node in reachable_pool
                 if node.speed_mbps is not None and backup_speed <= node.speed_mbps < good_speed
             ]
-            backup_nodes.sort(key=lambda n: (-float(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
+            backup_nodes.sort(
+                key=lambda n: (
+                    0 if n.metadata.get("is_priority") else 1,
+                    -float(n.speed_mbps or 0.0),
+                    n.latency_ms or 10**9,
+                    n.name,
+                )
+            )
 
             # 4. Excluded slow nodes: speed < 5 Mbps (or failed speedtest) - NEVER PUBLISHED!
             slow_nodes = [
@@ -234,12 +258,30 @@ def run(args: argparse.Namespace) -> int:
                 if node.speed_mbps is not None and node.speed_mbps < backup_speed
             ]
 
-            # 5. Priority assembly: FAST + GOOD first, BACKUP only as reserve up to max_output_nodes
-            primary_nodes = fast_nodes + good_nodes
-            needed_reserve = max(0, max_output_nodes - len(primary_nodes))
-            selected_reserve = backup_nodes[:needed_reserve]
+            # 5. Priority assembly:
+            # All Priority nodes (Eternity & Resilience) that passed speed test (>= 5 Mbps)
+            # are published at the very top of the subscription (FAST -> GOOD -> BACKUP).
+            # Then general servers (FAST -> GOOD, with BACKUP as reserve) fill remaining slots.
+            fast_priority = [n for n in fast_nodes if n.metadata.get("is_priority")]
+            fast_other = [n for n in fast_nodes if not n.metadata.get("is_priority")]
 
-            nodes = primary_nodes[:max_output_nodes] + selected_reserve
+            good_priority = [n for n in good_nodes if n.metadata.get("is_priority")]
+            good_other = [n for n in good_nodes if not n.metadata.get("is_priority")]
+
+            backup_priority = [n for n in backup_nodes if n.metadata.get("is_priority")]
+            backup_other = [n for n in backup_nodes if not n.metadata.get("is_priority")]
+
+            all_priority = fast_priority + good_priority + backup_priority
+            remaining_slots = max(0, max_output_nodes - len(all_priority))
+
+            other_primary = fast_other + good_other
+            other_selected_primary = other_primary[:remaining_slots]
+
+            remaining_after_primary = max(0, remaining_slots - len(other_selected_primary))
+            other_selected_backup = backup_other[:remaining_after_primary]
+
+            nodes = (all_priority + other_selected_primary + other_selected_backup)[:max_output_nodes]
+            selected_reserve_count = len(backup_priority) + len(other_selected_backup)
 
             print(
                 f"Classification results: {len(fast_nodes)} FAST (>= {fast_speed:g} Mbps), "
@@ -249,8 +291,13 @@ def run(args: argparse.Namespace) -> int:
                 flush=True,
             )
             print(
+                f"Priority bypass nodes: {len(all_priority)} published at top "
+                f"({len(fast_priority)} FAST, {len(good_priority)} GOOD, {len(backup_priority)} BACKUP).",
+                flush=True,
+            )
+            print(
                 f"Published {len(nodes)} nodes: {len(fast_nodes)} FAST + {len(good_nodes)} GOOD "
-                f"+ {len(selected_reserve)} BACKUP reserve.",
+                f"+ {selected_reserve_count} BACKUP reserve.",
                 flush=True,
             )
         else:

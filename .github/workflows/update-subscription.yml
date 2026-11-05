@@ -134,7 +134,7 @@ jobs:
           SOURCE_RETRIES: "1"
           FETCH_WORKERS: "8"
           TCP_PREFILTER_ENABLED: "1"
-          TCP_CONNECT_TIMEOUT_SECONDS: "1"
+          TCP_CONNECT_TIMEOUT_SECONDS: "2"
           TCP_PREFILTER_WORKERS: "64"
           ALIYUN_FC_ENABLED: "0"
           MAX_LATENCY_MS: "3000"

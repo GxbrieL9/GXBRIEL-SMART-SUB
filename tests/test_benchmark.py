@@ -249,6 +249,43 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn('short-id: "09"', text)
         self.assertEqual(document["proxies"][0]["reality-opts"]["short-id"], "09")
 
+    def test_priority_nodes_are_selected_first_for_speed_testing(self):
+        # Create 10 nodes, 2 are priority
+        nodes = [make_node(f"node-{i}", latency=50 + i * 10) for i in range(10)]
+        nodes[7].metadata["is_priority"] = True
+        nodes[8].metadata["is_priority"] = True
+
+        benchmark = MihomoBenchmark(
+            binary=Path("mihomo"),
+            workdir=Path(".work-test"),
+            nodes=nodes,
+            latency_url="https://www.google.com/generate_204",
+            speed_url="https://example.com/test.bin",
+            geo_url="https://api.country.is/",
+            timeout_ms=8000,
+            speed_bytes=1000,
+            speed_limit=4,
+            speed_timeout_seconds=15,
+            workers=1,
+        )
+        benchmark.benchmark_latency = lambda candidates: candidates
+        tested: list[str] = []
+
+        def fake_speed(node: Node) -> Node:
+            tested.append(node.name)
+            node.speed_mbps = 15.0
+            return node
+
+        benchmark.speed = fake_speed
+        benchmark.benchmark(nodes)
+        # The 2 priority nodes (node-7, node-8) must be in the tested slice
+        self.assertIn("node-7", tested)
+        self.assertIn("node-8", tested)
+        # And they should be tested before non-priority nodes
+        self.assertEqual(tested[0], "node-7")
+        self.assertEqual(tested[1], "node-8")
+        self.assertEqual(len(tested), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
