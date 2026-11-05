@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import time
@@ -15,8 +16,58 @@ def build_subscription(raw_path: Path) -> str:
     return "".join(f"{line}\n" for line in lines if line and not line.startswith("#"))
 
 
-def should_publish(node_count: int, previous: str) -> bool:
-    return node_count > 0 and bool(previous.strip())
+def get_permanent_raw_url(owner: str, gist_id: str, filename: str) -> str:
+    """Return permanent GitHub Gist raw URL without commit hash."""
+    return f"https://gist.githubusercontent.com/{owner}/{gist_id}/raw/{filename}"
+
+
+def should_publish(
+    node_count: int,
+    previous: str = "",
+    files: dict[str, str] | None = None,
+) -> bool:
+    if node_count <= 0:
+        return False
+    if previous and not bool(previous.strip()):
+        return False
+    if files is not None:
+        if not files:
+            return False
+        for filename, content in files.items():
+            if not content or not content.strip():
+                return False
+    return True
+
+
+def prepare_gist_files(
+    subscription_path: Path | None = None,
+    clash_path: Path | None = None,
+    singbox_path: Path | None = None,
+    raw_path: Path | None = None,
+) -> dict[str, dict[str, str]]:
+    files_payload: dict[str, dict[str, str]] = {}
+
+    if subscription_path and subscription_path.exists():
+        content = subscription_path.read_text(encoding="utf-8").strip()
+        if content:
+            files_payload["subscription.txt"] = {"content": content + "\n"}
+
+    if clash_path and clash_path.exists():
+        clash_content = clash_path.read_text(encoding="utf-8").strip()
+        if clash_content:
+            files_payload["clash.yaml"] = {"content": clash_content + "\n"}
+
+    if singbox_path and singbox_path.exists():
+        singbox_content = singbox_path.read_text(encoding="utf-8").strip()
+        if singbox_content:
+            files_payload["singbox.json"] = {"content": singbox_content + "\n"}
+
+    if raw_path and raw_path.exists():
+        raw_content = raw_path.read_text(encoding="utf-8").strip()
+        if raw_content:
+            files_payload["subscription-raw.txt"] = {"content": raw_content + "\n"}
+
+    return files_payload
 
 
 def _request(url: str, token: str, method: str = "GET", payload: dict | None = None) -> dict:
@@ -47,62 +98,78 @@ def _request(url: str, token: str, method: str = "GET", payload: dict | None = N
     raise RuntimeError(f"Request to {url} failed after {max_attempts} attempts.")
 
 
-def publish(gist_id: str, token: str, content: str, report_path: Path | None = None, raw_content: str = "") -> None:
+def publish(
+    gist_id: str,
+    token: str,
+    files_payload: dict[str, dict[str, str]],
+    report_path: Path | None = None,
+    node_count: int | None = None,
+) -> None:
     gist_url = f"https://api.github.com/gists/{gist_id}"
     gist = _request(gist_url, token)
-    previous_file = gist.get("files", {}).get("subscription.txt", {})
-    previous = str(previous_file.get("content", ""))
+    owner = gist.get("owner", {}).get("login", "GxbrieL9")
 
-    node_lines = [line for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
-    node_count = len(node_lines)
-
-    if not should_publish(node_count, previous):
-        print("Notice: No nodes to publish or empty content. Preserving existing Gist content.")
-        return
-
+    # Read stats from report if available
     fast_count = 0
+    actual_node_count = node_count or 0
     if report_path and report_path.exists():
         try:
             report_data = json.loads(report_path.read_text(encoding="utf-8"))
+            actual_node_count = actual_node_count or report_data.get("node_count", 0)
             nodes = report_data.get("nodes", [])
             fast_count = sum(1 for n in nodes if (n.get("speed_mbps") or 0) >= 24.0)
         except Exception:
             pass
 
+    if actual_node_count == 0 and "subscription.txt" in files_payload:
+        sub_content = files_payload["subscription.txt"]["content"]
+        # Try decoding base64 if needed
+        try:
+            decoded = base64.b64decode(sub_content).decode("utf-8", errors="ignore")
+            actual_node_count = len([line for line in decoded.splitlines() if line.strip() and not line.strip().startswith("#")])
+        except Exception:
+            actual_node_count = len([line for line in sub_content.splitlines() if line.strip() and not line.strip().startswith("#")])
+
+    files_content_map = {k: v["content"] for k, v in files_payload.items()}
+    if not should_publish(actual_node_count, files=files_content_map):
+        print("Notice: No nodes to publish or files are empty. Preserving existing Gist content.")
+        return
+
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    description = f"GXBRIEL SMART SUB — Updated {now_iso} | {node_count} nodes ({fast_count} >= 24 Mbps)"
-
-    import base64
-    b64_content = base64.b64encode(content.encode("utf-8")).decode("ascii") + "\n"
-
-    files_payload: dict[str, dict[str, str]] = {
-        "subscription.txt": {"content": content},
-        "subscription-b64.txt": {"content": b64_content},
-    }
-    if raw_content and raw_content != content:
-        files_payload["subscription-raw.txt"] = {"content": raw_content}
+    description = (
+        f"GXBRIEL SMART SUB — Universal Multi-Format | "
+        f"Updated {now_iso} | {actual_node_count} nodes ({fast_count} >= 3 MB/s)"
+    )
 
     _request(gist_url, token, "PATCH", {
         "description": description,
         "files": files_payload,
     })
 
-    owner = gist.get("owner", {}).get("login", "GxbrieL9")
-    raw_url = f"https://gist.githubusercontent.com/{owner}/{gist_id}/raw/subscription.txt"
+    sub_raw_url = get_permanent_raw_url(owner, gist_id, "subscription.txt")
+    clash_raw_url = get_permanent_raw_url(owner, gist_id, "clash.yaml")
+    singbox_raw_url = get_permanent_raw_url(owner, gist_id, "singbox.json")
 
-    print("=" * 60)
-    print("✓ GIST SUCCESSFULLY UPDATED!")
+    print("=" * 68)
+    print("✓ GIST SUCCESSFULLY UPDATED WITH UNIVERSAL SUBSCRIPTION FORMATS!")
     print(f"  Description: {description}")
-    print(f"  Total nodes: {node_count}")
-    print(f"  Fast nodes (>= 24 Mbps / 3 MB/s): {fast_count}")
-    print(f"  PERMANENT KARING URL: {raw_url}")
-    print("=" * 60)
+    print(f"  Total nodes: {actual_node_count}")
+    print(f"  Fast nodes (>= 3 MB/s / 24 Mbps): {fast_count}")
+    print()
+    print("  PERMANENT RAW LINKS (NO REVISION PINNING):")
+    print(f"  1. V2Ray / Base64 : {sub_raw_url}")
+    print(f"  2. Mihomo / Clash : {clash_raw_url}")
+    print(f"  3. sing-box       : {singbox_raw_url}")
+    print("=" * 68)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Publish subscription to GitHub Gist")
-    parser.add_argument("--raw", type=Path, help="Path to raw subscription file")
-    parser.add_argument("--subscription", type=Path, help="Path to subscription file")
+    parser = argparse.ArgumentParser(description="Publish universal subscription formats to GitHub Gist")
+    parser.add_argument("--subscription", type=Path, default=Path("public/subscription.txt"), help="Path to subscription.txt")
+    parser.add_argument("--clash", type=Path, default=Path("public/clash.yaml"), help="Path to clash.yaml")
+    parser.add_argument("--singbox", type=Path, default=Path("public/singbox.json"), help="Path to singbox.json")
+    parser.add_argument("--raw-subscription", type=Path, default=Path("public/subscription-raw.txt"), help="Path to raw subscription")
+    parser.add_argument("--raw", type=Path, help="Legacy: path to raw subscription")
     parser.add_argument("--report", type=Path, default=Path("public/report.json"), help="Path to report.json")
     args = parser.parse_args()
 
@@ -111,15 +178,22 @@ def main() -> int:
     if not gist_id or not token:
         raise RuntimeError("GIST_ID and GIST_TOKEN must be provided by GitHub Actions.")
 
-    content = ""
-    raw_content = ""
-    if args.raw and args.raw.exists():
-        content = build_subscription(args.raw)
-        raw_content = content
-    elif args.subscription and args.subscription.exists():
-        content = args.subscription.read_text(encoding="utf-8").strip() + "\n"
+    raw_path = args.raw if args.raw and args.raw.exists() else args.raw_subscription
 
-    publish(gist_id, token, content, report_path=args.report, raw_content=raw_content)
+    files_payload = prepare_gist_files(
+        subscription_path=args.subscription,
+        clash_path=args.clash,
+        singbox_path=args.singbox,
+        raw_path=raw_path,
+    )
+
+    if not files_payload and args.raw and args.raw.exists():
+        raw_sub = build_subscription(args.raw)
+        b64_sub = base64.b64encode(raw_sub.encode("utf-8")).decode("ascii") + "\n"
+        files_payload["subscription.txt"] = {"content": b64_sub}
+        files_payload["subscription-raw.txt"] = {"content": raw_sub}
+
+    publish(gist_id, token, files_payload, report_path=args.report)
     return 0
 
 

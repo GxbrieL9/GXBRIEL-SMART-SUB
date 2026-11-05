@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# Local test / binary artifacts
+.sentry-native/
+.bin/
+.work/
+public/

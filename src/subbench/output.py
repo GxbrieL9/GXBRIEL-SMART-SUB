@@ -5,11 +5,294 @@ import binascii
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 import yaml
 
 from .models import Node
+
+
+def node_to_singbox(node: Node) -> dict[str, Any] | None:
+    if not node.clash or not isinstance(node.clash, dict):
+        return None
+    clash = node.clash
+    scheme = str(node.scheme).lower()
+    name = node.name
+
+    if scheme == "vless":
+        outbound: dict[str, Any] = {
+            "type": "vless",
+            "tag": name,
+            "server": str(clash["server"]),
+            "server_port": int(clash["port"]),
+            "uuid": str(clash["uuid"]),
+            "packet_encoding": "xudp",
+        }
+        if clash.get("flow"):
+            outbound["flow"] = str(clash["flow"])
+        tls_config: dict[str, Any] = {}
+        if clash.get("tls") or clash.get("reality-opts"):
+            tls_config["enabled"] = True
+            if clash.get("servername"):
+                tls_config["server_name"] = str(clash["servername"])
+            if clash.get("skip-cert-verify"):
+                tls_config["insecure"] = True
+            if clash.get("alpn"):
+                tls_config["alpn"] = (
+                    clash["alpn"] if isinstance(clash["alpn"], list) else [str(clash["alpn"])]
+                )
+            if clash.get("client-fingerprint"):
+                tls_config["utls"] = {
+                    "enabled": True,
+                    "fingerprint": str(clash["client-fingerprint"]),
+                }
+            reality = clash.get("reality-opts")
+            if reality and reality.get("public-key"):
+                tls_config["reality"] = {
+                    "enabled": True,
+                    "public_key": str(reality["public-key"]),
+                    "short_id": str(reality.get("short-id", "")),
+                }
+        if tls_config:
+            outbound["tls"] = tls_config
+
+        network = str(clash.get("network", "tcp")).lower()
+        if network == "ws":
+            ws_opts = clash.get("ws-opts") or {}
+            transport: dict[str, Any] = {"type": "ws", "path": str(ws_opts.get("path", "/"))}
+            headers = ws_opts.get("headers") or {}
+            if headers.get("Host"):
+                transport["headers"] = {"Host": str(headers["Host"])}
+            outbound["transport"] = transport
+        elif network == "grpc":
+            grpc_opts = clash.get("grpc-opts") or {}
+            outbound["transport"] = {
+                "type": "grpc",
+                "service_name": str(grpc_opts.get("grpc-service-name", "")),
+            }
+        elif network == "httpupgrade":
+            opts = clash.get("http-upgrade-opts") or {}
+            transport = {"type": "httpupgrade", "path": str(opts.get("path", "/"))}
+            headers = opts.get("headers") or {}
+            if headers.get("Host"):
+                transport["host"] = str(headers["Host"])
+            outbound["transport"] = transport
+        return outbound
+
+    if scheme == "vmess":
+        outbound = {
+            "type": "vmess",
+            "tag": name,
+            "server": str(clash["server"]),
+            "server_port": int(clash["port"]),
+            "uuid": str(clash["uuid"]),
+            "security": str(clash.get("cipher", "auto") or "auto"),
+            "alter_id": int(clash.get("alterId", 0) or 0),
+            "packet_encoding": "xudp",
+        }
+        tls_config = {}
+        if clash.get("tls"):
+            tls_config["enabled"] = True
+            if clash.get("servername"):
+                tls_config["server_name"] = str(clash["servername"])
+            if clash.get("skip-cert-verify"):
+                tls_config["insecure"] = True
+            if clash.get("alpn"):
+                tls_config["alpn"] = (
+                    clash["alpn"] if isinstance(clash["alpn"], list) else [str(clash["alpn"])]
+                )
+            if clash.get("client-fingerprint"):
+                tls_config["utls"] = {
+                    "enabled": True,
+                    "fingerprint": str(clash["client-fingerprint"]),
+                }
+        if tls_config:
+            outbound["tls"] = tls_config
+
+        network = str(clash.get("network", "tcp")).lower()
+        if network == "ws":
+            ws_opts = clash.get("ws-opts") or {}
+            transport = {"type": "ws", "path": str(ws_opts.get("path", "/"))}
+            headers = ws_opts.get("headers") or {}
+            if headers.get("Host"):
+                transport["headers"] = {"Host": str(headers["Host"])}
+            outbound["transport"] = transport
+        elif network == "grpc":
+            grpc_opts = clash.get("grpc-opts") or {}
+            outbound["transport"] = {
+                "type": "grpc",
+                "service_name": str(grpc_opts.get("grpc-service-name", "")),
+            }
+        return outbound
+
+    if scheme == "trojan":
+        outbound = {
+            "type": "trojan",
+            "tag": name,
+            "server": str(clash["server"]),
+            "server_port": int(clash["port"]),
+            "password": str(clash["password"]),
+        }
+        tls_config = {"enabled": True}
+        sni = clash.get("sni") or clash.get("servername")
+        if sni:
+            tls_config["server_name"] = str(sni)
+        if clash.get("skip-cert-verify"):
+            tls_config["insecure"] = True
+        if clash.get("alpn"):
+            tls_config["alpn"] = (
+                clash["alpn"] if isinstance(clash["alpn"], list) else [str(clash["alpn"])]
+            )
+        outbound["tls"] = tls_config
+
+        network = str(clash.get("network", "tcp")).lower()
+        if network == "ws":
+            ws_opts = clash.get("ws-opts") or {}
+            transport = {"type": "ws", "path": str(ws_opts.get("path", "/"))}
+            headers = ws_opts.get("headers") or {}
+            if headers.get("Host"):
+                transport["headers"] = {"Host": str(headers["Host"])}
+            outbound["transport"] = transport
+        elif network == "grpc":
+            grpc_opts = clash.get("grpc-opts") or {}
+            outbound["transport"] = {
+                "type": "grpc",
+                "service_name": str(grpc_opts.get("grpc-service-name", "")),
+            }
+        return outbound
+
+    if scheme == "ss":
+        outbound = {
+            "type": "shadowsocks",
+            "tag": name,
+            "server": str(clash["server"]),
+            "server_port": int(clash["port"]),
+            "method": str(clash["cipher"]),
+            "password": str(clash["password"]),
+        }
+        if clash.get("plugin"):
+            outbound["plugin"] = str(clash["plugin"])
+            if clash.get("plugin-opts"):
+                outbound["plugin_opts"] = str(clash["plugin-opts"])
+        return outbound
+
+    if scheme == "hysteria2":
+        outbound = {
+            "type": "hysteria2",
+            "tag": name,
+            "server": str(clash["server"]),
+            "server_port": int(clash["port"]),
+            "password": str(clash["password"]),
+        }
+        tls_config = {"enabled": True}
+        sni = clash.get("sni") or clash.get("servername")
+        if sni:
+            tls_config["server_name"] = str(sni)
+        if clash.get("skip-cert-verify"):
+            tls_config["insecure"] = True
+        if clash.get("alpn"):
+            tls_config["alpn"] = (
+                clash["alpn"] if isinstance(clash["alpn"], list) else [str(clash["alpn"])]
+            )
+        outbound["tls"] = tls_config
+        if clash.get("obfs"):
+            outbound["obfs"] = {
+                "type": str(clash["obfs"]),
+                "password": str(clash.get("obfs-password", "")),
+            }
+        return outbound
+
+    if scheme == "tuic":
+        outbound = {
+            "type": "tuic",
+            "tag": name,
+            "server": str(clash["server"]),
+            "server_port": int(clash["port"]),
+            "uuid": str(clash["uuid"]),
+            "password": str(clash["password"]),
+            "congestion_control": str(clash.get("congestion-controller", "bbr")),
+            "udp_relay_mode": str(clash.get("udp-relay-mode", "native")),
+        }
+        tls_config = {"enabled": True}
+        sni = clash.get("sni") or clash.get("servername")
+        if sni:
+            tls_config["server_name"] = str(sni)
+        if clash.get("skip-cert-verify"):
+            tls_config["insecure"] = True
+        if clash.get("alpn"):
+            tls_config["alpn"] = (
+                clash["alpn"] if isinstance(clash["alpn"], list) else [str(clash["alpn"])]
+            )
+        outbound["tls"] = tls_config
+        return outbound
+
+    return None
+
+
+def build_singbox_config(nodes: list[Node]) -> dict[str, Any]:
+    singbox_outbounds: list[dict[str, Any]] = []
+    for node in nodes:
+        try:
+            outbound = node_to_singbox(node)
+            if outbound:
+                singbox_outbounds.append(outbound)
+        except Exception:
+            continue
+
+    tags = [ob["tag"] for ob in singbox_outbounds]
+
+    groups: list[dict[str, Any]] = []
+    if tags:
+        groups.append({
+            "type": "selector",
+            "tag": "PROXY",
+            "outbounds": ["AUTO", "direct", *tags],
+            "default": "AUTO",
+        })
+        groups.append({
+            "type": "urltest",
+            "tag": "AUTO",
+            "outbounds": tags,
+            "url": "https://www.google.com/generate_204",
+            "interval": "5m",
+            "tolerance": 50,
+        })
+    else:
+        groups.append({
+            "type": "selector",
+            "tag": "PROXY",
+            "outbounds": ["direct"],
+            "default": "direct",
+        })
+
+    return {
+        "log": {"level": "warn"},
+        "dns": {
+            "servers": [
+                {"tag": "dns-remote", "type": "tls", "server": "8.8.8.8"},
+                {"tag": "dns-direct", "type": "local", "detour": "direct"},
+            ]
+        },
+        "inbounds": [
+            {
+                "type": "mixed",
+                "tag": "mixed-in",
+                "listen": "127.0.0.1",
+                "listen_port": 2080,
+            }
+        ],
+        "outbounds": [
+            *groups,
+            *singbox_outbounds,
+            {"type": "direct", "tag": "direct"},
+        ],
+        "route": {
+            "default_domain_resolver": "dns-direct",
+            "final": "PROXY",
+            "auto_detect_interface": True,
+        },
+    }
 
 
 def _safe_name(name: str, index: int, used: set[str]) -> str:
@@ -89,6 +372,11 @@ def write_outputs(output_dir: Path, nodes: list[Node], source_errors: list[dict[
         yaml.safe_dump(clash_config, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
 
+    singbox_config = build_singbox_config(nodes)
+    (output_dir / "singbox.json").write_text(
+        json.dumps(singbox_config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "node_count": len(nodes),
@@ -110,7 +398,7 @@ def write_outputs(output_dir: Path, nodes: list[Node], source_errors: list[dict[
 <style>body{{font:16px system-ui,sans-serif;max-width:1000px;margin:40px auto;padding:0 20px}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #ddd;padding:8px;text-align:left}}code{{background:#f3f3f3;padding:2px 4px}}</style>
 <h1>Node subscriptions</h1>
 <p>Generated {report['generated_at']} with {len(nodes)} usable nodes.</p>
-<ul><li><a href="v2ray.txt">V2Ray Base64 subscription</a></li><li><a href="clash.yaml">Clash/Mihomo config</a></li><li><a href="v2ray-raw.txt">Raw links</a></li><li><a href="report.json">JSON report</a></li></ul>
+<ul><li><a href="subscription.txt">V2Ray Base64 subscription</a></li><li><a href="clash.yaml">Clash/Mihomo config</a></li><li><a href="singbox.json">sing-box config</a></li><li><a href="subscription-raw.txt">Raw links</a></li><li><a href="report.json">JSON report</a></li></ul>
 <table><thead><tr><th>#</th><th>Name</th><th>Type</th><th>Latency</th><th>Speed</th></tr></thead><tbody>{rows}</tbody></table>
 """
     (output_dir / "index.html").write_text(page, encoding="utf-8")

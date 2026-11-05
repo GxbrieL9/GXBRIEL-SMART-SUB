@@ -30,36 +30,47 @@ def generate_summary() -> int:
     protocols: dict[str, int] = {}
     for n in nodes:
         cc = str(n.get("country_code") or "UN").upper()
-        proto = str(n.get("scheme") or "UNKNOWN").upper()
+        proto = str(n.get("type") or n.get("scheme") or "UNKNOWN").upper()
         countries[cc] = countries.get(cc, 0) + 1
         protocols[proto] = protocols.get(proto, 0) + 1
 
-    top_countries = ", ".join(f"{k}: {v}" for k, v in sorted(countries.items(), key=lambda x: -x[1])[:8])
-    proto_breakdown = ", ".join(f"{k}: {v}" for k, v in sorted(protocols.items(), key=lambda x: -x[1]))
+    top_countries = ", ".join(f"{k}: {v}" for k, v in sorted(countries.items(), key=lambda x: -x[1])[:8]) or "N/A"
+    proto_breakdown = ", ".join(f"{k}: {v}" for k, v in sorted(protocols.items(), key=lambda x: -x[1])) or "N/A"
 
     gist_id = os.environ.get("GIST_ID", "").strip()
-    raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/subscription.txt"
-    raw_b64_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/subscription-b64.txt"
+    sub_raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/subscription.txt"
+    clash_raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/clash.yaml"
+    singbox_raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/singbox.json"
 
-    summary = f"""## 🚀 GXBRIEL SMART SUB — Сводка обновления
+    summary = f"""## 🚀 GXBRIEL SMART SUB — Универсальная подписка
 
 | Показатель | Значение |
 | :--- | :--- |
-| **Опубликовано серверов** | **`{node_count}`** (из лимита 200) |
-| **Скоростные узлы (≥ 24 Мбит/с / 3 МБ/с)** | **`{fast_nodes}`** |
-| **Протоколы** | {proto_breakdown} |
+| **Опубликовано рабочих узлов** | **`{node_count}`** (из лимита до 200) |
+| **Скоростные узлы (≥ 3 МБ/с / 24 Мбит/с)** | **`{fast_nodes}`** |
+| **Поддерживаемые протоколы** | {proto_breakdown} |
 | **Геолокации узлов** | {top_countries} |
-| **Прямая ссылка для Karing (Raw)** | [`subscription.txt`]({raw_url}) |
-| **Base64-ссылка (для v2rayN/Xray)** | [`subscription-b64.txt`]({raw_b64_url}) |
 
-### 📲 Инструкция по добавлению в Karing:
-1. Скопируйте постоянную прямую ссылку:
-   ```text
-   {raw_url}
-   ```
-2. Откройте **Karing** → перейдите в раздел **Профили (Profiles)** → **Добавить подписку (Add Subscription)**.
-3. Вставьте ссылку, назовите профиль `GXBRIEL SMART SUB` и сохраните.
-4. Включите автоматическое обновление подписки в приложении.
+---
+
+### 🌐 Постоянные Raw-ссылки для подключения (без привязки к ревизии):
+
+| Формат | Совместимые клиенты | Постоянный URL |
+| :--- | :--- | :--- |
+| **V2Ray / Base64** (`subscription.txt`) | Hiddify, Karing, v2rayN, Shadowrocket, Streisand, v2rayNG | [`subscription.txt`]({sub_raw_url}) |
+| **Mihomo / Clash** (`clash.yaml`) | Mihomo Party, Clash Verge Rev, Clash Meta, Hiddify, Karing | [`clash.yaml`]({clash_raw_url}) |
+| **sing-box** (`singbox.json`) | sing-box, Hiddify, Karing, Nekobox | [`singbox.json`]({singbox_raw_url}) |
+
+```text
+# V2Ray / Base64:
+{sub_raw_url}
+
+# Mihomo / Clash:
+{clash_raw_url}
+
+# sing-box:
+{singbox_raw_url}
+```
 """
 
     if summary_path:

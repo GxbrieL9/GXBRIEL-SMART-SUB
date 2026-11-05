@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gxbriel-smart-sub"
 version = "0.1.0"
-description = "GXBRIEL SMART SUB — Automated VPN proxy aggregator and speed benchmarker for Karing"
+description = "GXBRIEL SMART SUB — Universal automated multi-format VPN subscription aggregator and speed benchmarker"
 requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0.2,<7",

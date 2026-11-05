@@ -1,4 +1,4 @@
-name: Update Subscriptions
+name: Update Universal Subscriptions
 
 on:
   schedule:
@@ -57,7 +57,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python - <<'PY'
+          python - << 'PY'
           import json
           import os
           import urllib.request
@@ -109,7 +109,7 @@ jobs:
           SOURCE_TIMEOUT_SECONDS: "60"
           SOURCE_RETRIES: "3"
           FETCH_WORKERS: "8"
-          TCP_PREFILTER_ENABLED: "0"
+          TCP_PREFILTER_ENABLED: "1"
           ALIYUN_FC_ENABLED: "0"
           MAX_LATENCY_MS: "3000"
           LATENCY_TIMEOUT_MS: "6000"
@@ -119,21 +119,24 @@ jobs:
           SPEED_TEST_ENABLED: "1"
           SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '300' }}
           SPEED_TEST_BYTES: "3000000"
-          SPEED_TIMEOUT_SECONDS: "6"
+          SPEED_TIMEOUT_SECONDS: "8"
           PREFERRED_SPEED_MBPS: ${{ inputs.preferred_speed || '24.0' }}
           MIN_SPEED_MBPS: "0.1"
           MAX_OUTPUT_NODES: ${{ inputs.max_output_nodes || '200' }}
         run: |
           subbench run --mihomo .bin/mihomo --output public --workdir .work
 
-      - name: Publish to Secret Gist
+      - name: Publish all subscription formats to Secret Gist
         id: publish-gist
         env:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ vars.GIST_ID }}
         run: |
           python publish_gist.py \
-            --raw public/subscription-raw.txt \
+            --subscription public/subscription.txt \
+            --clash public/clash.yaml \
+            --singbox public/singbox.json \
+            --raw-subscription public/subscription-raw.txt \
             --report public/report.json
 
       - name: Upload build artifacts
