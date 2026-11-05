@@ -47,10 +47,43 @@ def _validate_vless_encryption(value: str) -> None:
         )
 
 
+def normalize_vless_flow(value: str | None) -> str | None:
+    if not value:
+        return None
+    flow = value.strip().lower()
+    if flow in {"none", ""}:
+        return None
+    if flow.startswith("xtls-rprx-vision"):
+        return "xtls-rprx-vision"
+    raise ValueError(f"unsupported VLESS flow for Hiddify Core: {value[:120]}")
+
+
 def _validate_vless_flow(value: str) -> None:
-    flow = value.strip()
-    if flow and flow not in {"xtls-rprx-vision"}:
-        raise ValueError(f"unsupported VLESS flow for Hiddify Core: {flow[:120]}")
+    normalize_vless_flow(value)
+
+
+def is_valid_host(host: str) -> bool:
+    if not host or len(host) > 253:
+        return False
+    clean = host.strip()
+    if clean.startswith("[") and clean.endswith("]"):
+        clean = clean[1:-1]
+    if ":" in clean:
+        if clean.count(":") >= 2:
+            import ipaddress
+
+            try:
+                ipaddress.IPv6Address(clean)
+                return True
+            except ValueError:
+                return False
+        clean = clean.split(":")[0]
+    return bool(
+        re.match(
+            r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$",
+            clean,
+        )
+    )
 
 
 def _normalize_ss_cipher(value: str) -> str:
@@ -182,7 +215,7 @@ def _apply_transport(proxy: dict[str, Any], query: dict[str, list[str]]) -> None
     if network == "ws":
         ws_options: dict[str, Any] = {"path": _first(query, "path", "/")}
         host = _first(query, "host")
-        if host:
+        if host and is_valid_host(host):
             ws_options["headers"] = {"Host": host}
         proxy["ws-opts"] = ws_options
     elif network == "grpc":
@@ -191,7 +224,7 @@ def _apply_transport(proxy: dict[str, Any], query: dict[str, list[str]]) -> None
     elif network == "httpupgrade":
         options: dict[str, Any] = {"path": _first(query, "path", "/")}
         host = _first(query, "host")
-        if host:
+        if host and is_valid_host(host):
             options["headers"] = {"Host": host}
         proxy["http-upgrade-opts"] = options
 
@@ -202,7 +235,7 @@ def _apply_tls(proxy: dict[str, Any], query: dict[str, list[str]]) -> None:
         return
     proxy["tls"] = True
     server_name = _first(query, "sni")
-    if server_name:
+    if server_name and is_valid_host(server_name):
         proxy["servername"] = server_name
     fingerprint = _first(query, "fp")
     if fingerprint:
@@ -240,9 +273,9 @@ def _parse_vless(uri: str, source: str) -> Node:
         "udp": True,
     }
     flow = _first(query, "flow")
-    if flow:
-        _validate_vless_flow(flow)
-        proxy["flow"] = flow
+    norm_flow = normalize_vless_flow(flow)
+    if norm_flow:
+        proxy["flow"] = norm_flow
     encryption = _first(query, "encryption", "none").strip() or "none"
     _validate_vless_encryption(encryption)
     _apply_tls(proxy, query)
@@ -303,8 +336,11 @@ def _parse_trojan(uri: str, source: str) -> Node:
         "udp": True,
     }
     server_name = _first(query, "sni")
-    if server_name:
+    if server_name and is_valid_host(server_name):
         proxy["sni"] = server_name
+    fingerprint = _first(query, "fp")
+    if fingerprint:
+        proxy["client-fingerprint"] = fingerprint
     if _truthy(_first(query, "allowInsecure")) or _truthy(_first(query, "insecure")):
         proxy["skip-cert-verify"] = True
     _apply_transport(proxy, query)
@@ -378,8 +414,11 @@ def _parse_hysteria2(uri: str, source: str) -> Node:
         "password": password,
     }
     server_name = _first(query, "sni")
-    if server_name:
+    if server_name and is_valid_host(server_name):
         proxy["sni"] = server_name
+    fingerprint = _first(query, "fp")
+    if fingerprint:
+        proxy["client-fingerprint"] = fingerprint
     if _truthy(_first(query, "insecure")):
         proxy["skip-cert-verify"] = True
     obfs = _first(query, "obfs")
@@ -410,8 +449,11 @@ def _parse_tuic(uri: str, source: str) -> Node:
         "congestion-controller": _first(query, "congestion_control", "bbr"),
     }
     server_name = _first(query, "sni")
-    if server_name:
+    if server_name and is_valid_host(server_name):
         proxy["sni"] = server_name
+    fingerprint = _first(query, "fp")
+    if fingerprint:
+        proxy["client-fingerprint"] = fingerprint
     alpn = _first(query, "alpn")
     if alpn:
         proxy["alpn"] = [item for item in alpn.split(",") if item]
@@ -431,6 +473,13 @@ def parse_clash_proxy(proxy: dict[str, Any], source: str) -> Node:
     clash["name"] = name
     if scheme == "vless":
         _validate_vless_encryption(str(clash.get("encryption", "none")))
+        flow = clash.get("flow")
+        if flow:
+            norm_flow = normalize_vless_flow(str(flow))
+            if norm_flow:
+                clash["flow"] = norm_flow
+            else:
+                clash.pop("flow", None)
     if scheme == "ss" and clash.get("cipher"):
         clash["cipher"] = _normalize_ss_cipher(str(clash["cipher"]))
     uri = clash_to_uri(clash)
@@ -474,12 +523,14 @@ def clash_to_uri(proxy: dict[str, Any]) -> str:
         query: dict[str, str] = {"encryption": str(proxy.get("encryption", "none"))}
         query["security"] = "reality" if proxy.get("reality-opts") else ("tls" if proxy.get("tls") else "none")
         _transport_to_query(proxy, query)
-        if proxy.get("servername"):
+        if proxy.get("servername") and is_valid_host(str(proxy["servername"])):
             query["sni"] = str(proxy["servername"])
         if proxy.get("client-fingerprint"):
             query["fp"] = str(proxy["client-fingerprint"])
         if proxy.get("flow"):
-            query["flow"] = str(proxy["flow"])
+            norm_flow = normalize_vless_flow(str(proxy["flow"]))
+            if norm_flow:
+                query["flow"] = norm_flow
         reality = proxy.get("reality-opts", {})
         if reality:
             query["pbk"] = str(reality.get("public-key", ""))
@@ -489,8 +540,10 @@ def clash_to_uri(proxy: dict[str, Any]) -> str:
     if scheme == "trojan":
         query = {}
         _transport_to_query(proxy, query)
-        if proxy.get("sni"):
+        if proxy.get("sni") and is_valid_host(str(proxy["sni"])):
             query["sni"] = str(proxy["sni"])
+        if proxy.get("client-fingerprint"):
+            query["fp"] = str(proxy["client-fingerprint"])
         return f"trojan://{quote(str(proxy['password']))}@{host}:{port}?{urlencode(query)}#{name}"
 
     if scheme == "hysteria2":

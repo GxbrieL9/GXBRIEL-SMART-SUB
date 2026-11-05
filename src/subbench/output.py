@@ -11,6 +11,7 @@ from urllib.parse import quote
 import yaml
 
 from .models import Node
+from .parsers import is_valid_host, normalize_vless_flow
 
 
 def node_to_singbox(node: Node) -> dict[str, Any] | None:
@@ -30,7 +31,9 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
             "packet_encoding": "xudp",
         }
         if clash.get("flow"):
-            outbound["flow"] = str(clash["flow"])
+            norm_flow = normalize_vless_flow(str(clash["flow"]))
+            if norm_flow:
+                outbound["flow"] = norm_flow
         tls_config: dict[str, Any] = {}
         if clash.get("tls") or clash.get("reality-opts"):
             tls_config["enabled"] = True
@@ -140,7 +143,7 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
         }
         tls_config = {"enabled": True}
         sni = clash.get("sni") or clash.get("servername")
-        if sni:
+        if sni and is_valid_host(str(sni)):
             tls_config["server_name"] = str(sni)
         if clash.get("skip-cert-verify"):
             tls_config["insecure"] = True
@@ -148,6 +151,11 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
             tls_config["alpn"] = (
                 clash["alpn"] if isinstance(clash["alpn"], list) else [str(clash["alpn"])]
             )
+        if clash.get("client-fingerprint"):
+            tls_config["utls"] = {
+                "enabled": True,
+                "fingerprint": str(clash["client-fingerprint"]),
+            }
         outbound["tls"] = tls_config
 
         network = str(clash.get("network", "tcp")).lower()
@@ -193,7 +201,7 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
         }
         tls_config = {"enabled": True}
         sni = clash.get("sni") or clash.get("servername")
-        if sni:
+        if sni and is_valid_host(str(sni)):
             tls_config["server_name"] = str(sni)
         if clash.get("skip-cert-verify"):
             tls_config["insecure"] = True
@@ -201,6 +209,11 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
             tls_config["alpn"] = (
                 clash["alpn"] if isinstance(clash["alpn"], list) else [str(clash["alpn"])]
             )
+        if clash.get("client-fingerprint"):
+            tls_config["utls"] = {
+                "enabled": True,
+                "fingerprint": str(clash["client-fingerprint"]),
+            }
         outbound["tls"] = tls_config
         if clash.get("obfs"):
             outbound["obfs"] = {
@@ -222,7 +235,7 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
         }
         tls_config = {"enabled": True}
         sni = clash.get("sni") or clash.get("servername")
-        if sni:
+        if sni and is_valid_host(str(sni)):
             tls_config["server_name"] = str(sni)
         if clash.get("skip-cert-verify"):
             tls_config["insecure"] = True
@@ -230,6 +243,11 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
             tls_config["alpn"] = (
                 clash["alpn"] if isinstance(clash["alpn"], list) else [str(clash["alpn"])]
             )
+        if clash.get("client-fingerprint"):
+            tls_config["utls"] = {
+                "enabled": True,
+                "fingerprint": str(clash["client-fingerprint"]),
+            }
         outbound["tls"] = tls_config
         return outbound
 
@@ -342,6 +360,11 @@ def _rename_uri(uri: str, scheme: str, name: str) -> str:
     qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
     changed = False
 
+    path = parsed.path
+    if scheme in {"vless", "trojan", "ss", "hysteria2", "hy2", "tuic"} and path == "/":
+        path = ""
+        changed = True
+
     if "type" in qs and qs["type"][0].lower() in {"raw", "none", ""}:
         qs["type"] = ["tcp"]
         changed = True
@@ -358,21 +381,37 @@ def _rename_uri(uri: str, scheme: str, name: str) -> str:
             del qs["alpn"]
         changed = True
 
-    if "fm" in qs:
-        del qs["fm"]
+    if "flow" in qs:
+        flow_val = qs["flow"][0].strip()
+        try:
+            norm_flow = normalize_vless_flow(flow_val)
+            if norm_flow:
+                qs["flow"] = [norm_flow]
+            else:
+                del qs["flow"]
+        except ValueError:
+            del qs["flow"]
+        changed = True
+
+    if "host" in qs and not is_valid_host(qs["host"][0]):
+        del qs["host"]
+        changed = True
+
+    if "sni" in qs and not is_valid_host(qs["sni"][0]):
+        del qs["sni"]
         changed = True
 
     # These are Xray/sing-box implementation hints, not VLESS URI transport
     # parameters. Hiddify rejects some otherwise valid outbounds when they are
     # present in the imported Base64 subscription.
-    for key in ("spx", "packetEncoding"):
+    for key in ("spx", "packetEncoding", "fm", "ech", "fragment"):
         if key in qs:
             del qs[key]
             changed = True
 
     if changed:
         clean_query = urllib.parse.urlencode(qs, doseq=True)
-        main = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, clean_query, ""))
+        main = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, clean_query, ""))
 
     return f"{main}#{quote(name, safe='')}"
 
@@ -395,6 +434,13 @@ def write_outputs(
     (output_dir / "subscription-raw.txt").write_text(raw, encoding="utf-8")
 
     proxies = [node.clash for node in nodes if node.clash]
+    for proxy in proxies:
+        if str(proxy.get("type", "")).lower() == "vless" and proxy.get("flow"):
+            norm = normalize_vless_flow(str(proxy["flow"]))
+            if norm:
+                proxy["flow"] = norm
+            else:
+                proxy.pop("flow", None)
     names = [proxy["name"] for proxy in proxies]
     if names:
         proxy_groups = [

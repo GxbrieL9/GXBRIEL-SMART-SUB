@@ -25,9 +25,16 @@ class ParserTests(unittest.TestCase):
     def test_vless_flow_unsupported_by_hiddify_core_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unsupported VLESS flow"):
             parse_uri(
-                "vless://00000000-0000-4000-8000-000000000001@example.com:443?encryption=none&flow=xtls-rprx-vision-udp443",
+                "vless://00000000-0000-4000-8000-000000000001@example.com:443?encryption=none&flow=xtls-rprx-direct",
                 "test",
             )
+
+    def test_vless_flow_udp443_is_normalized(self):
+        node = parse_uri(
+            "vless://00000000-0000-4000-8000-000000000001@example.com:443?encryption=none&flow=xtls-rprx-vision-udp443",
+            "test",
+        )
+        self.assertEqual(node.clash["flow"], "xtls-rprx-vision")
 
     def test_document_reports_skipped_vless_encryption(self):
         skipped: list[str] = []

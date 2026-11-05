@@ -27,6 +27,24 @@ class OutputTests(unittest.TestCase):
         self.assertIn("security=reality", rendered)
         self.assertIn("pbk=key", rendered)
 
+    def test_rename_uri_sanitizes_flow_and_malformed_host(self):
+        rendered = _rename_uri(
+            "vless://id@example.com:443?security=reality&flow=xtls-rprx-vision-udp443&host=/?SPAM#old",
+            "vless",
+            "cleaned",
+        )
+        self.assertIn("flow=xtls-rprx-vision", rendered)
+        self.assertNotIn("xtls-rprx-vision-udp443", rendered)
+        self.assertNotIn("host=", rendered)
+
+    def test_rename_uri_removes_stray_leading_slash_path(self):
+        rendered = _rename_uri(
+            "vless://id@example.com:443/?security=tls#old",
+            "vless",
+            "no-slash",
+        )
+        self.assertTrue(rendered.startswith("vless://id@example.com:443?security=tls#"))
+
     def test_vmess_display_name_is_replaced(self):
         payload = base64.urlsafe_b64encode(json.dumps({"ps": "old", "add": "example.com"}).encode()).decode().rstrip("=")
         rendered = _rename_uri(f"vmess://{payload}", "vmess", "🇯🇵 日本 | VMESS | 001")
