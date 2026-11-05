@@ -1,54 +1,196 @@
-name: Update Karing subscription
+name: Update Subscriptions
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "17 * * * *"
+    # Run hourly at minute 0
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      speed_test_limit:
+        description: 'Maximum candidate nodes to test speed (0 for unlimited)'
+        required: false
+        default: '300'
+        type: string
+      preferred_speed:
+        description: 'Preferred speed threshold in Mbps (24 Mbps = 3 MB/s)'
+        required: false
+        default: '24.0'
+        type: string
+      max_output_nodes:
+        description: 'Maximum final nodes in subscription'
+        required: false
+        default: '200'
+        type: string
+
+concurrency:
+  group: update-subscriptions
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
-concurrency:
-  group: subscription-update
-  cancel-in-progress: true
-
 jobs:
-  update:
+  build-and-publish:
+    name: Test & Publish Subscriptions
     runs-on: ubuntu-latest
-    timeout-minutes: 35
-    env:
-      SOURCE_URLS: ${{ secrets.SOURCE_URLS }}
-      GIST_ID: ${{ vars.GIST_ID }}
-      GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
-      SPEED_TEST_ENABLED: "1"
-      MIN_SPEED_MBPS: "24"
-      MAX_OUTPUT_NODES: "200"
-      MAX_NODES: "800"
-      SPEED_TEST_LIMIT: "300"
-      SPEED_TEST_BYTES: "1048576"
-      SPEED_TIMEOUT_SECONDS: "10"
-      BENCHMARK_WORKERS: "24"
-      TCP_PREFILTER_ENABLED: "1"
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 30
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+          cache: "pip"
 
       - name: Install dependencies
-        run: python -m pip install .
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Resolve latest Mihomo release
+        id: mihomo-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          request = urllib.request.Request(
+              "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "GXBRIEL-SMART-SUB-Builder/1.0",
+                  "Authorization": f"Bearer {os.environ.get('GH_TOKEN', '')}",
+              },
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=30) as resp:
+                  version = json.load(resp).get("tag_name", "latest")
+          except Exception as e:
+              print(f"Notice: Could not query latest Mihomo release: {e}")
+              version = "latest"
+          print(f"Using Mihomo release: {version}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"version={version}\n")
+          PY
+
+      - name: Cache Mihomo binary
+        id: cache-mihomo
+        uses: actions/cache@v4
+        with:
+          path: .cache/mihomo
+          key: mihomo-${{ runner.os }}-${{ runner.arch }}-${{ steps.mihomo-release.outputs.version }}
 
       - name: Install Mihomo
-        run: python scripts/install_mihomo.py --output .bin/mihomo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .cache/mihomo .bin
+          if [ ! -f .cache/mihomo/mihomo ]; then
+            python scripts/install_mihomo.py --output .cache/mihomo/mihomo
+          fi
+          cp .cache/mihomo/mihomo .bin/mihomo
+          chmod +x .bin/mihomo
+          .bin/mihomo -v
 
-      - name: Build and benchmark subscription
-        run: >-
-          python -m subbench run
-          --mihomo .bin/mihomo
-          --output public
-          --workdir .work
+      - name: Run benchmark & generate subscriptions
+        id: benchmark
+        env:
+          SOURCE_URLS: ${{ secrets.SOURCE_URLS }}
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
+          SOURCE_TIMEOUT_SECONDS: "60"
+          SOURCE_RETRIES: "3"
+          FETCH_WORKERS: "8"
+          TCP_PREFILTER_ENABLED: "0"
+          ALIYUN_FC_ENABLED: "0"
+          MAX_LATENCY_MS: "3000"
+          LATENCY_TIMEOUT_MS: "6000"
+          LATENCY_TEST_ATTEMPTS: "2"
+          BENCHMARK_WORKERS: "48"
+          GEOIP_WORKERS: "48"
+          SPEED_TEST_ENABLED: "1"
+          SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '300' }}
+          SPEED_TEST_BYTES: "3000000"
+          SPEED_TIMEOUT_SECONDS: "6"
+          PREFERRED_SPEED_MBPS: ${{ inputs.preferred_speed || '24.0' }}
+          MIN_SPEED_MBPS: "0.1"
+          MAX_OUTPUT_NODES: ${{ inputs.max_output_nodes || '200' }}
+        run: |
+          subbench run --mihomo .bin/mihomo --output public --workdir .work
 
-      - name: Publish subscription.txt to Secret Gist
-        run: python publish_gist.py --raw public/v2ray-raw.txt
+      - name: Publish to Secret Gist
+        id: publish-gist
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ vars.GIST_ID }}
+        run: |
+          python publish_gist.py \
+            --raw public/subscription-raw.txt \
+            --report public/report.json
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: subscription-output
+          path: public/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Summary report
+        if: always()
+        run: |
+          if [ -f public/report.json ]; then
+            python - <<'PY'
+            import json
+            import os
+
+            with open("public/report.json", encoding="utf-8") as f:
+                report = json.load(f)
+
+            node_count = report.get("node_count", 0)
+            nodes = report.get("nodes", [])
+            fast_nodes = sum(1 for n in nodes if (n.get("speed_mbps") or 0) >= 24.0)
+
+            countries = {}
+            for n in nodes:
+                cc = n.get("country_code", "UN")
+                countries[cc] = countries.get(cc, 0) + 1
+
+            top_countries = ", ".join(f"{k}: {v}" for k, v in sorted(countries.items(), key=lambda x: -x[1])[:8])
+
+            gist_id = os.environ.get("GIST_ID", "")
+            raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/subscription.txt"
+
+            summary = f"""
+            ## 🚀 GXBRIEL SMART SUB — Execution Summary
+            | Metric | Value |
+            | :--- | :--- |
+            | **Total Nodes Published** | `{node_count}` (max 200) |
+            | **Fast Nodes (≥ 24 Mbps / 3 MB/s)** | `{fast_nodes}` |
+            | **Top Locations** | {top_countries} |
+            | **Karing Subscription Link** | [`subscription.txt`]({raw_url}) |
+
+            ### 📲 Karing Import Instructions
+            1. Copy this permanent URL:
+               `{raw_url}`
+            2. Open **Karing** → **Profiles / Subscriptions** → **Add Subscription**.
+            3. Paste the URL and save.
+            """
+
+            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as s:
+                s.write(summary)
+            PY
+          else:
+            echo "No report.json found." >> $GITHUB_STEP_SUMMARY
+          fi
+        env:
+          GIST_ID: ${{ vars.GIST_ID }}

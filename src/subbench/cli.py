@@ -193,15 +193,22 @@ def run(args: argparse.Namespace) -> int:
                     max_consecutive_errors=_int_env("ALIYUN_FC_MAX_CONSECUTIVE_ERRORS", 3),
                     workers=_int_env("ALIYUN_FC_WORKERS", 10),
                 )
-    nodes.sort(
-        key=lambda node: (
-            node.speed_mbps is None,
-            -(node.speed_mbps or 0),
-            node.latency_ms is None,
-            node.latency_ms or 10**9,
+    preferred_speed = _float_env("PREFERRED_SPEED_MBPS", 24.0)
+
+    def node_sort_key(node: Node):
+        speed = node.speed_mbps or 0.0
+        is_preferred = speed >= preferred_speed
+        has_speed = node.speed_mbps is not None and speed > 0
+        latency = node.latency_ms or 10**9
+        return (
+            not is_preferred,
+            not has_speed,
+            -speed,
+            latency,
         )
-    )
-    max_output_nodes = _int_env("MAX_OUTPUT_NODES", 0)
+
+    nodes.sort(key=node_sort_key)
+    max_output_nodes = _int_env("MAX_OUTPUT_NODES", 200)
     if max_output_nodes > 0:
         nodes = nodes[:max_output_nodes]
     if benchmark_performed:
