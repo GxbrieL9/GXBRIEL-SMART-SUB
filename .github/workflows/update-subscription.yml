@@ -120,8 +120,8 @@ jobs:
           BENCHMARK_WORKERS: "24"
           GEOIP_WORKERS: "12"
           SPEED_TEST_ENABLED: "1"
-          SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '36' }}
-          SPEED_TEST_BYTES: "262144"
+          SPEED_TEST_LIMIT: ${{ inputs.speed_test_limit || '24' }}
+          SPEED_TEST_BYTES: "1048576"
           SPEED_TIMEOUT_SECONDS: "2"
           PREFERRED_SPEED_MBPS: ${{ inputs.preferred_speed || '24.0' }}
           MIN_SPEED_MBPS: "24.0"
