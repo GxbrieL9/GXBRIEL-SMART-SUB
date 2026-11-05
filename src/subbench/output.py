@@ -58,6 +58,8 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
             outbound["tls"] = tls_config
 
         network = str(clash.get("network", "tcp")).lower()
+        if network in {"raw", "none", ""}:
+            network = "tcp"
         if network == "ws":
             ws_opts = clash.get("ws-opts") or {}
             transport: dict[str, Any] = {"type": "ws", "path": str(ws_opts.get("path", "/"))}
@@ -111,6 +113,8 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
             outbound["tls"] = tls_config
 
         network = str(clash.get("network", "tcp")).lower()
+        if network in {"raw", "none", ""}:
+            network = "tcp"
         if network == "ws":
             ws_opts = clash.get("ws-opts") or {}
             transport = {"type": "ws", "path": str(ws_opts.get("path", "/"))}
@@ -147,6 +151,8 @@ def node_to_singbox(node: Node) -> dict[str, Any] | None:
         outbound["tls"] = tls_config
 
         network = str(clash.get("network", "tcp")).lower()
+        if network in {"raw", "none", ""}:
+            network = "tcp"
         if network == "ws":
             ws_opts = clash.get("ws-opts") or {}
             transport = {"type": "ws", "path": str(ws_opts.get("path", "/"))}
@@ -325,7 +331,41 @@ def _rename_uri(uri: str, scheme: str, name: str) -> str:
             return "vmess://" + base64.urlsafe_b64encode(rendered).decode("ascii").rstrip("=")
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error):
             return uri
+
     main = uri.split("#", 1)[0]
+    main = main.replace("type=raw", "type=tcp")
+
+    import re
+    import urllib.parse
+
+    parsed = urllib.parse.urlsplit(main)
+    qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    changed = False
+
+    if "type" in qs and qs["type"][0].lower() in {"raw", "none", ""}:
+        qs["type"] = ["tcp"]
+        changed = True
+
+    if "alpn" in qs:
+        cleaned = [
+            item.strip()
+            for item in qs["alpn"][0].split(",")
+            if item.strip() and re.match(r"^[a-zA-Z0-9_\.\-\+]+$", item.strip())
+        ]
+        if cleaned:
+            qs["alpn"] = [",".join(cleaned)]
+        else:
+            del qs["alpn"]
+        changed = True
+
+    if "fm" in qs:
+        del qs["fm"]
+        changed = True
+
+    if changed:
+        clean_query = urllib.parse.urlencode(qs, doseq=True)
+        main = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, clean_query, ""))
+
     return f"{main}#{quote(name, safe='')}"
 
 

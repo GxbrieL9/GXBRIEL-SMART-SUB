@@ -245,15 +245,32 @@ class MihomoBenchmark:
                         print(f"Location test {index}/{total}: {located} countries detected", flush=True)
             return valid
 
-        if self.speed_limit <= 0:
+        if self.speed_limit <= 0 or len(valid) <= self.speed_limit:
             speed_candidates = valid
         else:
-            # Sample across the latency-ordered list instead of testing only
-            # its first (lowest-latency) slice.
-            step = max(1, len(valid) // self.speed_limit)
-            speed_candidates = valid[::step][: self.speed_limit]
+            # Representative sampling across the responsive pool (latency <= 2500ms)
+            responsive_pool = [n for n in valid if (n.latency_ms or 10**9) <= 2500]
+            if not responsive_pool:
+                responsive_pool = valid
+
+            if len(responsive_pool) <= self.speed_limit:
+                speed_candidates = responsive_pool
+            else:
+                # 50% top lowest latency (highest potential throughput)
+                top_count = max(1, self.speed_limit // 2)
+                top_slice = responsive_pool[:top_count]
+
+                # 50% stratified across the rest of the pool for protocol/geo diversity
+                rest = responsive_pool[top_count:]
+                step = max(1, len(rest) // max(1, self.speed_limit - top_count)) if rest else 1
+                spaced = rest[::step] if rest else []
+
+                seen_ids = set(id(n) for n in top_slice)
+                extra = [n for n in spaced if id(n) not in seen_ids]
+                speed_candidates = (top_slice + extra)[: self.speed_limit]
+
         total = len(speed_candidates)
-        max_speed_workers = min(16, self.workers) if self.node_proxy_ports else 1
+        max_speed_workers = min(24, self.workers) if self.node_proxy_ports else 1
         with ThreadPoolExecutor(max_workers=max_speed_workers) as executor:
             futures: dict[Any, Node] = {}
             candidate_iter = iter(speed_candidates)

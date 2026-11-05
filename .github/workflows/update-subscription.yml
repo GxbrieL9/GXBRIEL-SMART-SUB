@@ -124,9 +124,12 @@ jobs:
           SPEED_TEST_BYTES: "1048576"
           SPEED_TIMEOUT_SECONDS: "2"
           PREFERRED_SPEED_MBPS: ${{ inputs.preferred_speed || '24.0' }}
-          MIN_SPEED_MBPS: "24.0"
+          MIN_SPEED_MBPS: "12.0"
+          FAST_SPEED_MBPS: "24.0"
+          GOOD_SPEED_MBPS: "12.0"
+          BACKUP_SPEED_MBPS: "5.0"
           SPEED_FALLBACK_ENABLED: "1"
-          SPEED_FALLBACK_MIN_MBPS: "0.1"
+          SPEED_FALLBACK_MIN_MBPS: "5.0"
           MAX_OUTPUT_NODES: ${{ inputs.max_output_nodes || '200' }}
         run: |
           subbench run --mihomo .bin/mihomo --output public --workdir .work

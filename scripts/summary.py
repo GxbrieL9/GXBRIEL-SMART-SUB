@@ -30,9 +30,11 @@ def generate_summary() -> int:
 
     node_count = report.get("node_count", 0)
     nodes = report.get("nodes", [])
-    fast_nodes = sum(1 for n in nodes if (n.get("speed_mbps") or 0) >= 24.0)
-
     stats = report.get("execution_stats", {})
+    speed_stats = stats.get("speed_mbps", {})
+    fast_nodes = speed_stats.get("fast", sum(1 for n in nodes if (n.get("speed_mbps") or 0) >= 24.0))
+    good_nodes = speed_stats.get("good", 0)
+    backup_nodes = speed_stats.get("backup", 0)
     duration_s = stats.get("duration_seconds", 0.0)
     billed_m = stats.get("billed_minutes", max(1, (int(duration_s) + 59) // 60) if duration_s > 0 else 1)
     projected_m = stats.get("monthly_projected_minutes", billed_m * 744)
@@ -71,6 +73,9 @@ def generate_summary() -> int:
 | :--- | :--- |
 | **Опубликовано рабочих узлов** | **`{node_count}`** (из лимита до 200) |
 | **Скоростные узлы (≥ 3 МБ/с / 24 Мбит/с)** | **`{fast_nodes}`** |
+| **GOOD (12–24 Мбит/с)** | **`{good_nodes}`** |
+| **BACKUP (5–12 Мбит/с)** | **`{backup_nodes}`** |
+| **Speed min / median / average / max** | `{speed_stats.get("min", "N/A")} / {speed_stats.get("median", "N/A")} / {speed_stats.get("average", "N/A")} / {speed_stats.get("max", "N/A")} Mbps` |
 | **Поддерживаемые протоколы** | {proto_breakdown} |
 | **Геолокации узлов** | {top_countries} |
 

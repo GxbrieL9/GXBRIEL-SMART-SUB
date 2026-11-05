@@ -168,6 +168,8 @@ def parse_uri(uri: str, source: str) -> Node:
 
 def _apply_transport(proxy: dict[str, Any], query: dict[str, list[str]]) -> None:
     network = _first(query, "type", "tcp").lower()
+    if network in {"raw", "none", ""}:
+        network = "tcp"
     if network != "tcp":
         proxy["network"] = network
 
@@ -203,7 +205,13 @@ def _apply_tls(proxy: dict[str, Any], query: dict[str, list[str]]) -> None:
         proxy["skip-cert-verify"] = True
     alpn = _first(query, "alpn")
     if alpn:
-        proxy["alpn"] = [item.strip() for item in alpn.split(",") if item.strip()]
+        clean_alpns = [
+            item.strip()
+            for item in alpn.split(",")
+            if item.strip() and re.match(r"^[a-zA-Z0-9_\.\-\+]+$", item.strip())
+        ]
+        if clean_alpns:
+            proxy["alpn"] = clean_alpns
     if security == "reality":
         public_key = _first(query, "pbk")
         short_id = _first(query, "sid")
@@ -504,7 +512,9 @@ def clash_to_uri(proxy: dict[str, Any]) -> str:
 
 
 def _transport_to_query(proxy: dict[str, Any], query: dict[str, str]) -> None:
-    network = str(proxy.get("network", "tcp"))
+    network = str(proxy.get("network", "tcp")).lower()
+    if network in {"raw", "none", ""}:
+        network = "tcp"
     query["type"] = network
     if network == "ws":
         options = proxy.get("ws-opts", {})

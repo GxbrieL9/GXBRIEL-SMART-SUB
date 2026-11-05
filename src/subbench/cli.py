@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -62,7 +63,7 @@ def _country_flag(country_code: str) -> str:
     return "".join(chr(ord(character) + 127397) for character in code)
 
 
-def _rename_nodes_by_country(nodes: list[Node]) -> None:
+def _rename_nodes_by_country(nodes: list[Node], preferred_speed: float = 24.0) -> None:
     counters: dict[tuple[str, str], int] = {}
     for node in nodes:
         country_code = str(node.metadata.get("country_code", "UN")).upper()
@@ -71,9 +72,12 @@ def _rename_nodes_by_country(nodes: list[Node]) -> None:
         protocol = node.scheme.upper()
         key = (country_code, protocol)
         counters[key] = counters.get(key, 0) + 1
+        speed_badge = ""
+        if node.speed_mbps is not None and node.speed_mbps >= preferred_speed:
+            speed_badge = f" ⚡ {node.speed_mbps:.1f}M"
         node.name = (
             f"{_country_flag(country_code)} {country_name_zh(country_code)}"
-            f" | {protocol} | {counters[key]:03d}"
+            f" | {protocol} | {counters[key]:03d}{speed_badge}"
         )
         if node.clash:
             node.clash["name"] = node.name
@@ -152,7 +156,7 @@ def run(args: argparse.Namespace) -> int:
                 latency_url=os.environ.get("LATENCY_TEST_URL", "https://www.google.com/generate_204"),
                 speed_url=os.environ.get(
                     "SPEED_TEST_URL",
-                    "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/release/country.mmdb",
+                    "https://speed.cloudflare.com/__down?bytes=1000000",
                 ),
                 geo_url=os.environ.get(
                     "GEOIP_TEST_URLS",
@@ -161,8 +165,8 @@ def run(args: argparse.Namespace) -> int:
                 timeout_ms=_int_env("LATENCY_TIMEOUT_MS", 8000),
                 speed_bytes=_int_env("SPEED_TEST_BYTES", 1_000_000),
                 speed_limit=_int_env("SPEED_TEST_LIMIT", 0),
-                speed_timeout_seconds=_int_env("SPEED_TIMEOUT_SECONDS", 8),
-                workers=_int_env("BENCHMARK_WORKERS", 48),
+                speed_timeout_seconds=_int_env("SPEED_TIMEOUT_SECONDS", 4),
+                workers=_int_env("BENCHMARK_WORKERS", 64),
                 speed_enabled=speed_test_enabled,
                 geo_workers=_int_env("GEOIP_WORKERS", 64),
                 latency_attempts=_int_env("LATENCY_TEST_ATTEMPTS", 2),
@@ -172,30 +176,46 @@ def run(args: argparse.Namespace) -> int:
                 nodes = benchmark.benchmark(nodes)
 
     max_latency = _int_env("MAX_LATENCY_MS", 3000)
-    min_speed = _float_env("MIN_SPEED_MBPS", 0.1)
+    preferred_speed = _float_env("PREFERRED_SPEED_MBPS", 24.0)
+    max_output_nodes = _int_env("MAX_OUTPUT_NODES", 200)
+
     if benchmark_performed:
-        nodes = _filter_benchmarked_nodes(
-            nodes,
-            max_latency,
-            min_speed,
-            require_speed=speed_test_enabled,
-        )
-        if speed_test_enabled and not nodes and _bool_env("SPEED_FALLBACK_ENABLED", True):
-            fallback_min_speed = _float_env("SPEED_FALLBACK_MIN_MBPS", 0.1)
-            nodes = [
-                node
-                for node in unique.values()
-                if node.error is None
-                and node.latency_ms is not None
-                and node.latency_ms <= max_latency
-                and node.speed_mbps is not None
-                and node.speed_mbps >= fallback_min_speed
-            ]
+        # 1. Pool of all nodes that successfully responded to Mihomo latency benchmark
+        reachable_pool = [
+            node
+            for node in unique.values()
+            if node.error is None
+            and node.latency_ms is not None
+            and node.latency_ms <= max_latency
+        ]
+
+        # 2. Tier 1: Verified fast nodes (>= preferred_speed Mbps / 3 MB/s)
+        fast_nodes = [
+            node
+            for node in reachable_pool
+            if node.speed_mbps is not None and node.speed_mbps >= preferred_speed
+        ]
+        fast_nodes.sort(key=lambda n: (-float(n.speed_mbps or 0.0), n.latency_ms or 10**9, n.name))
+
+        # 3. Tier 2: Verified reachable nodes (lowest latency) to supplement up to max_output_nodes
+        fast_ids = set(id(n) for n in fast_nodes)
+        backup_nodes = [node for node in reachable_pool if id(node) not in fast_ids]
+        backup_nodes.sort(key=lambda n: (n.latency_ms or 10**9, n.name))
+
+        if speed_test_enabled:
+            needed_backup = max(0, max_output_nodes - len(fast_nodes))
+            if _bool_env("SPEED_FALLBACK_ENABLED", True):
+                nodes = fast_nodes[:max_output_nodes] + backup_nodes[:needed_backup]
+            else:
+                nodes = fast_nodes[:max_output_nodes]
             print(
-                f"No nodes reached {min_speed:g} Mbps; using {len(nodes)} fully speed-tested "
-                f"fallback nodes at or above {fallback_min_speed:g} Mbps.",
+                f"Selected {len(nodes)} verified nodes: {len(fast_nodes)} fast (>= {preferred_speed:g} Mbps / 3 MB/s) "
+                f"+ {len(nodes) - len(fast_nodes)} low-latency backup nodes (from {len(reachable_pool)} reachable).",
                 flush=True,
             )
+        else:
+            nodes = reachable_pool[:max_output_nodes]
+
         if not _bool_env("ALIYUN_FC_ENABLED", True):
             print("Aliyun FC TCP prefilter disabled.", flush=True)
         else:
@@ -216,26 +236,8 @@ def run(args: argparse.Namespace) -> int:
                     max_consecutive_errors=_int_env("ALIYUN_FC_MAX_CONSECUTIVE_ERRORS", 3),
                     workers=_int_env("ALIYUN_FC_WORKERS", 10),
                 )
-    preferred_speed = _float_env("PREFERRED_SPEED_MBPS", 24.0)
 
-    def node_sort_key(node: Node):
-        speed = node.speed_mbps or 0.0
-        is_preferred = speed >= preferred_speed
-        has_speed = node.speed_mbps is not None and speed > 0
-        latency = node.latency_ms or 10**9
-        return (
-            not is_preferred,
-            not has_speed,
-            -speed,
-            latency,
-        )
-
-    nodes.sort(key=node_sort_key)
-    max_output_nodes = _int_env("MAX_OUTPUT_NODES", 200)
-    if max_output_nodes > 0:
-        nodes = nodes[:max_output_nodes]
-    if benchmark_performed:
-        _rename_nodes_by_country(nodes)
+        _rename_nodes_by_country(nodes, preferred_speed)
     if not nodes:
         failures = "; ".join(node.error or "unknown error" for node in unique.values() if node.error)
         source_errors.append(
@@ -248,12 +250,28 @@ def run(args: argparse.Namespace) -> int:
 
     duration_seconds = round(time.monotonic() - start_time, 2)
     billed_minutes = max(1, (int(duration_seconds) + 59) // 60)
+    measured = [node.speed_mbps for node in unique.values() if node.speed_mbps is not None]
     execution_stats = {
         "duration_seconds": duration_seconds,
         "billed_minutes": billed_minutes,
         "monthly_projected_minutes": billed_minutes * 744,
         "github_free_limit_minutes": 2000,
         "github_free_balance_minutes": max(0, 2000 - (billed_minutes * 744)),
+        "sources_total": len(source_specs),
+        "sources_succeeded": len(source_specs) - len(source_errors),
+        "sources_failed": len(source_errors),
+        "candidates_unique": len(unique),
+        "speed_test_completed": len(measured),
+        "speed_test_failed": sum(1 for node in unique.values() if node.error),
+        "speed_mbps": {
+            "min": min(measured) if measured else None,
+            "average": round(statistics.mean(measured), 3) if measured else None,
+            "median": statistics.median(measured) if measured else None,
+            "max": max(measured) if measured else None,
+            "fast": sum(value >= fast_speed for value in measured),
+            "good": sum(good_speed <= value < fast_speed for value in measured),
+            "backup": sum(backup_speed <= value < good_speed for value in measured),
+        },
     }
     write_outputs(Path(args.output), nodes, source_errors, execution_stats=execution_stats)
     print(
