@@ -90,52 +90,49 @@ def validate_hiddify(
         print(f"Hiddify Core {kind} passed for {Path(command[2] if kind == 'parse' else command[3]).name}")
 
     if probe:
-        built_singbox = output_dir / f"{singbox.stem}.built.json"
-        if not built_singbox.exists():
-            built_singbox = singbox
-
-        # Sanitize any balancer strategy to ensure sing-box starts without missing strategy error
-        probe_cfg_path = output_dir / "probe_config.json"
-        try:
-            with open(built_singbox, "r", encoding="utf-8") as f:
-                cfg_data = json.load(f)
-            for ob in cfg_data.get("outbounds", []):
-                if ob.get("type") == "balancer" and not ob.get("strategy"):
-                    ob["strategy"] = "round-robin"
-            with open(probe_cfg_path, "w", encoding="utf-8") as f:
-                json.dump(cfg_data, f, indent=2)
-            target_config = probe_cfg_path
-        except Exception:
-            target_config = built_singbox
-
+        log_file = output_dir / "hiddify_probe_run.log"
         run_command = [
             str(cli),
-            "srun",
+            "run",
             "-c",
-            str(target_config),
+            str(singbox),
+            "--in-proxy-port",
+            str(probe_port),
             "--disable-color",
+            "--log-level",
+            "warn",
         ]
-        log_file = output_dir / "hiddify_probe_run.log"
         with open(log_file, "w", encoding="utf-8") as core_log:
             process = subprocess.Popen(run_command, stdout=core_log, stderr=core_log)
+        
         try:
             time.sleep(3)
             if process.poll() is not None:
-                # If srun is unsupported, fallback to run
-                run_command = [
-                    str(cli),
-                    "run",
-                    "-c",
-                    str(target_config),
-                    "--in-proxy-port",
-                    str(probe_port),
-                    "--disable-color",
-                    "--log-level",
-                    "warn",
-                ]
-                with open(log_file, "w", encoding="utf-8") as core_log:
-                    process = subprocess.Popen(run_command, stdout=core_log, stderr=core_log)
-                time.sleep(3)
+                # Fallback for Windows desktop CLI where 'run' needs explicit balancer strategy in built config
+                built_singbox = output_dir / f"{singbox.stem}.built.json"
+                if built_singbox.exists():
+                    try:
+                        with open(built_singbox, "r", encoding="utf-8") as f:
+                            cfg_data = json.load(f)
+                        for ob in cfg_data.get("outbounds", []):
+                            if ob.get("type") == "balancer" and not ob.get("strategy"):
+                                ob["strategy"] = "round-robin"
+                        probe_cfg_path = output_dir / "probe_config.json"
+                        with open(probe_cfg_path, "w", encoding="utf-8") as f:
+                            json.dump(cfg_data, f, indent=2)
+                        run_srun = [
+                            str(cli),
+                            "srun",
+                            "-c",
+                            str(probe_cfg_path),
+                            "--disable-color",
+                        ]
+                        with open(log_file, "w", encoding="utf-8") as core_log:
+                            process = subprocess.Popen(run_srun, stdout=core_log, stderr=core_log)
+                        time.sleep(3)
+                    except Exception:
+                        pass
+
                 if process.poll() is not None:
                     with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
                         err_lines = f.readlines()
@@ -170,7 +167,7 @@ def validate_hiddify(
                     continue
 
             if not https_ok and not proxied_ip:
-                # Fallback to cli health check if urllib was blocked
+                # Fallback to cli health check if urllib had direct socket differences
                 health = subprocess.run(
                     [
                         str(cli),
