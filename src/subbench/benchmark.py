@@ -245,7 +245,13 @@ class MihomoBenchmark:
                         print(f"Location test {index}/{total}: {located} countries detected", flush=True)
             return valid
 
-        speed_candidates = valid if self.speed_limit <= 0 else valid[: self.speed_limit]
+        if self.speed_limit <= 0:
+            speed_candidates = valid
+        else:
+            # Sample across the latency-ordered list instead of testing only
+            # its first (lowest-latency) slice.
+            step = max(1, len(valid) // self.speed_limit)
+            speed_candidates = valid[::step][: self.speed_limit]
         total = len(speed_candidates)
         max_speed_workers = min(16, self.workers) if self.node_proxy_ports else 1
         with ThreadPoolExecutor(max_workers=max_speed_workers) as executor:
