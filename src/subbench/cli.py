@@ -80,7 +80,11 @@ def _rename_nodes_by_country(nodes: list[Node]) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
-    runtime_deadline = time.monotonic() + max(10.0, _float_env("MAX_RUNTIME_SECONDS", 0.0)) if _float_env("MAX_RUNTIME_SECONDS", 0.0) > 0 else None
+    start_time = time.monotonic()
+    max_runtime = _float_env("MAX_RUNTIME_SECONDS", 0.0)
+    if max_runtime <= 0:
+        max_runtime = _float_env("BENCHMARK_MAX_SECONDS", 50.0)
+    runtime_deadline = start_time + max(10.0, max_runtime) if max_runtime > 0 else None
     source_specs = load_sources(args.sources)
     if not source_specs:
         raise RuntimeError("No sources configured. Add URLs to config/sources.txt or SOURCE_URLS.")
@@ -226,8 +230,20 @@ def run(args: argparse.Namespace) -> int:
         )
         print("No nodes passed the configured latency/speed filters; publishing an empty subscription.")
 
-    write_outputs(Path(args.output), nodes, source_errors)
-    print(f"Published {len(nodes)} nodes from {len(source_specs)} sources.")
+    duration_seconds = round(time.monotonic() - start_time, 2)
+    billed_minutes = max(1, (int(duration_seconds) + 59) // 60)
+    execution_stats = {
+        "duration_seconds": duration_seconds,
+        "billed_minutes": billed_minutes,
+        "monthly_projected_minutes": billed_minutes * 744,
+        "github_free_limit_minutes": 2000,
+        "github_free_balance_minutes": max(0, 2000 - (billed_minutes * 744)),
+    }
+    write_outputs(Path(args.output), nodes, source_errors, execution_stats=execution_stats)
+    print(
+        f"Published {len(nodes)} nodes from {len(source_specs)} sources in "
+        f"{duration_seconds}s (billed as {billed_minutes} GitHub Actions min)."
+    )
     return 0
 
 

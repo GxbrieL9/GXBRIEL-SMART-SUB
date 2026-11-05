@@ -26,12 +26,15 @@ class OutputTests(unittest.TestCase):
     def test_empty_subscription_uses_direct_only_group(self):
         with TemporaryDirectory() as directory:
             output = Path(directory)
-            write_outputs(output, [], [{"source": "benchmark", "error": "no usable nodes"}])
+            stats = {"duration_seconds": 45.2, "billed_minutes": 1, "monthly_projected_minutes": 744}
+            write_outputs(output, [], [{"source": "benchmark", "error": "no usable nodes"}], execution_stats=stats)
             clash = yaml.safe_load((output / "clash.yaml").read_text(encoding="utf-8"))
             report = json.loads((output / "report.json").read_text(encoding="utf-8"))
             singbox = json.loads((output / "singbox.json").read_text(encoding="utf-8"))
             self.assertEqual(clash["proxy-groups"], [{"name": "PROXY", "type": "select", "proxies": ["DIRECT"]}])
             self.assertEqual(report["node_count"], 0)
+            self.assertEqual(report["execution_stats"]["duration_seconds"], 45.2)
+            self.assertEqual(report["execution_stats"]["billed_minutes"], 1)
             self.assertTrue((output / "singbox.json").exists())
             self.assertEqual(singbox["outbounds"][0]["tag"], "PROXY")
             self.assertEqual(singbox["outbounds"][0]["outbounds"], ["direct"])

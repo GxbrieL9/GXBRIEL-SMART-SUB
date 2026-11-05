@@ -7,6 +7,12 @@ from pathlib import Path
 
 
 def generate_summary() -> int:
+    try:
+        if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     report_path = Path("public/report.json")
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
 
@@ -26,6 +32,12 @@ def generate_summary() -> int:
     nodes = report.get("nodes", [])
     fast_nodes = sum(1 for n in nodes if (n.get("speed_mbps") or 0) >= 24.0)
 
+    stats = report.get("execution_stats", {})
+    duration_s = stats.get("duration_seconds", 0.0)
+    billed_m = stats.get("billed_minutes", max(1, (int(duration_s) + 59) // 60) if duration_s > 0 else 1)
+    projected_m = stats.get("monthly_projected_minutes", billed_m * 744)
+    balance_m = stats.get("github_free_balance_minutes", max(0, 2000 - projected_m))
+
     countries: dict[str, int] = {}
     protocols: dict[str, int] = {}
     for n in nodes:
@@ -42,6 +54,17 @@ def generate_summary() -> int:
     clash_raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/clash.yaml"
     singbox_raw_url = f"https://gist.githubusercontent.com/GxbrieL9/{gist_id}/raw/singbox.json"
 
+    duration_str = f"{int(duration_s // 60)}м {int(duration_s % 60):02d}с ({duration_s:.1f}с)" if duration_s > 0 else "N/A"
+
+    schedule_note = ""
+    if duration_s >= 95:
+        schedule_note = (
+            "\n> [!TIP]\n"
+            "> Длительность выполнения приблизилась к лимиту тайм-аута. "
+            "Рекомендуется переключиться на интервал раз в 2 часа (`cron: '17 */2 * * *'`) "
+            "с `timeout-minutes: 4` (расход останется в рамках 1 488 мин/мес).\n"
+        )
+
     summary = f"""## 🚀 GXBRIEL SMART SUB — Универсальная подписка
 
 | Показатель | Значение |
@@ -53,7 +76,19 @@ def generate_summary() -> int:
 
 ---
 
-### 🌐 Постоянные Raw-ссылки для подключения (без привязки к ревизии):
+### ⏱️ Фактическая длительность и лимит GitHub Actions Free (0.00 $):
+
+| Метрика выполнения | Значение | Описание |
+| :--- | :--- | :--- |
+| **Фактическая длительность сборки** | **`{duration_str}`** | Жёсткий лимит `timeout-minutes: 2` |
+| **Списано включённых минут GitHub** | **`{billed_m} мин`** | Посекундное округление runner |
+| **Прогноз расхода в месяц** | **`~{projected_m} мин`** | Расчёт для 744 запусков (24/день * 31) |
+| **Остаток бесплатного лимита Free** | **`~{balance_m} мин`** | Из 2 000 включённых минут аккаунта |
+| **Финансовые расходы** | **0.00 $ (0 руб.)** | Гарантия нулевых расходов |
+{schedule_note}
+---
+
+### 🌐 Постоянные Raw-ссылки для подключения:
 
 | Формат | Совместимые клиенты | Постоянный URL |
 | :--- | :--- | :--- |

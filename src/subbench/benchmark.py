@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -47,6 +47,7 @@ class MihomoBenchmark:
         geo_workers: int | None = None,
         latency_attempts: int = 2,
         deadline_monotonic: float | None = None,
+        deadline: float | None = None,
     ) -> None:
         self.binary = binary
         self.workdir = workdir
@@ -61,7 +62,7 @@ class MihomoBenchmark:
         self.workers = max(1, workers)
         self.geo_workers = max(1, geo_workers or workers)
         self.latency_attempts = max(1, latency_attempts)
-        self.deadline_monotonic = deadline_monotonic
+        self.deadline_monotonic = deadline if deadline is not None else deadline_monotonic
         self.speed_enabled = speed_enabled
         self.controller = "http://127.0.0.1:9090"
         self.proxy_port = 7890
@@ -246,20 +247,44 @@ class MihomoBenchmark:
 
         speed_candidates = valid if self.speed_limit <= 0 else valid[: self.speed_limit]
         total = len(speed_candidates)
-        max_speed_workers = min(12, self.workers) if self.node_proxy_ports else 1
+        max_speed_workers = min(16, self.workers) if self.node_proxy_ports else 1
         with ThreadPoolExecutor(max_workers=max_speed_workers) as executor:
-            futures = []
-            for node in speed_candidates:
+            futures: dict[Any, Node] = {}
+            candidate_iter = iter(speed_candidates)
+            for _ in range(max_speed_workers):
                 if self.deadline_monotonic is not None and time.monotonic() >= self.deadline_monotonic:
-                    print("Runtime budget reached; publishing completed speed checks.", flush=True)
                     break
-                futures.append(executor.submit(self.speed, node))
-            total = len(futures)
-            for index, future in enumerate(as_completed(futures), start=1):
-                node = future.result()
-                result = f"{node.speed_mbps} Mbps" if node.speed_mbps is not None else node.error or "failed"
-                if index % 25 == 0 or index == total or (node.speed_mbps and node.speed_mbps >= 24.0):
-                    print(f"Speed test {index}/{total}: {node.name} - {result}", flush=True)
+                node = next(candidate_iter, None)
+                if node is None:
+                    break
+                futures[executor.submit(self.speed, node)] = node
+
+            tested_count = 0
+            while futures:
+                done, _ = wait(list(futures.keys()), return_when=FIRST_COMPLETED, timeout=0.5)
+                for future in done:
+                    node = futures.pop(future)
+                    tested_count += 1
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        node.error = f"speed: {exc}"
+                    if tested_count % 20 == 0 or (node.speed_mbps and node.speed_mbps >= 24.0):
+                        spd = f"{node.speed_mbps} Mbps" if node.speed_mbps is not None else node.error or "failed"
+                        print(f"Speed test [{tested_count}/{total}]: {node.name} - {spd}", flush=True)
+
+                    if self.deadline_monotonic is None or time.monotonic() < self.deadline_monotonic:
+                        next_node = next(candidate_iter, None)
+                        if next_node is not None:
+                            futures[executor.submit(self.speed, next_node)] = next_node
+
+                if self.deadline_monotonic is not None and time.monotonic() >= self.deadline_monotonic:
+                    if futures:
+                        print(
+                            f"Runtime budget reached; concluded speed tests gracefully with {tested_count} tested.",
+                            flush=True,
+                        )
+                        break
         return valid
 
 

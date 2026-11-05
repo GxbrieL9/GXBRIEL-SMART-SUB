@@ -329,7 +329,12 @@ def _rename_uri(uri: str, scheme: str, name: str) -> str:
     return f"{main}#{quote(name, safe='')}"
 
 
-def write_outputs(output_dir: Path, nodes: list[Node], source_errors: list[dict[str, str]]) -> None:
+def write_outputs(
+    output_dir: Path,
+    nodes: list[Node],
+    source_errors: list[dict[str, str]],
+    execution_stats: dict[str, Any] | None = None,
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     prepare_names(nodes)
 
@@ -383,6 +388,8 @@ def write_outputs(output_dir: Path, nodes: list[Node], source_errors: list[dict[
         "source_errors": source_errors,
         "nodes": [node.report_dict() for node in nodes],
     }
+    if execution_stats:
+        report["execution_stats"] = execution_stats
     (output_dir / "report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

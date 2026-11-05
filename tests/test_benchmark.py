@@ -52,6 +52,40 @@ class BenchmarkTests(unittest.TestCase):
         benchmark.benchmark(nodes)
         self.assertEqual(tested, ["one", "two", "three"])
 
+    def test_benchmark_respects_deadline(self):
+        import time
+
+        nodes = [make_node(f"node-{i}", 100) for i in range(10)]
+        benchmark = MihomoBenchmark(
+            binary=Path("mihomo"),
+            workdir=Path(".work-test"),
+            nodes=nodes,
+            latency_url="https://www.google.com/generate_204",
+            speed_url="https://example.com/test.bin",
+            geo_url="https://api.country.is/",
+            timeout_ms=8000,
+            speed_bytes=1000,
+            speed_limit=0,
+            speed_timeout_seconds=15,
+            workers=1,
+            deadline=time.monotonic() + 0.05,
+        )
+        benchmark.benchmark_latency = lambda candidates: candidates
+        tested: list[str] = []
+
+        def slow_speed(node: Node) -> Node:
+            tested.append(node.name)
+            time.sleep(0.04)
+            node.speed_mbps = 10.0
+            return node
+
+        benchmark.speed = slow_speed
+        result = benchmark.benchmark(nodes)
+        self.assertEqual(len(result), 10)
+        # Should have stopped early due to deadline
+        self.assertLess(len(tested), 10)
+        self.assertGreater(len(tested), 0)
+
     def test_filter_rejects_incomplete_or_failed_measurements(self):
         nodes = [
             make_node("good", 100, 5.0),
