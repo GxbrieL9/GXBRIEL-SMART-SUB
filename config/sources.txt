@@ -4,6 +4,10 @@
 # Keep private URLs out of this file. Store them in the SOURCE_URLS
 # repository secret as newline-separated values.
 
+# Highest Priority Subscriptions (Bypass & Anti-Censorship)
+Eternity | https://raw.githubusercontent.com/VpnforWindowsSub/configs/refs/heads/master/Eternity
+Resilience | https://raw.githubusercontent.com/VPNforWindowsSub/configs/refs/heads/master/Resilience
+
 # Public sources supplied for this project.
 https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt
 https://openproxylist.com/v2ray/rawlist/subscribe

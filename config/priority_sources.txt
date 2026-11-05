@@ -1,0 +1,3 @@
+# Priority sources - always fetched and prioritized first
+Eternity | https://raw.githubusercontent.com/VpnforWindowsSub/configs/refs/heads/master/Eternity
+Resilience | https://raw.githubusercontent.com/VPNforWindowsSub/configs/refs/heads/master/Resilience
